@@ -158,6 +158,73 @@ export type InventoryLotProfitability = {
   completedRoiPercent: number | null;
 };
 
+export type ShipmentItem = {
+  id: number;
+  shipmentId: number;
+  purchaseOrderItemId: number;
+  productId: number;
+  quantityShipped: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ShipmentEvent = {
+  id: number;
+  shipmentId: number;
+  eventType: string;
+  eventDate: string;
+  location: string | null;
+  description: string | null;
+  createdAt: string;
+};
+
+export type Shipment = {
+  id: number;
+  purchaseOrderId: number;
+  shipmentNumber: string;
+  transportMode: string;
+  carrierName: string | null;
+  originLocation: string | null;
+  destinationLocation: string | null;
+  trackingReference: string | null;
+  etd: string | null;
+  eta: string | null;
+  actualDepartureAt: string | null;
+  actualArrivalAt: string | null;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  items: ShipmentItem[];
+  events: ShipmentEvent[];
+};
+
+export type ImportExpense = {
+  id: number;
+  customsEntryId: number;
+  expenseType: string;
+  expenseDate: string;
+  currencyCode: string;
+  amountOriginal: string;
+  exchangeRateToUsd: string;
+  amountUsd: string;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CustomsEntry = {
+  id: number;
+  shipmentId: number;
+  entryNumber: string;
+  arrivalDateChile: string | null;
+  clearanceDate: string | null;
+  status: string;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+  expenses: ImportExpense[];
+};
+
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:3000/api';
 
