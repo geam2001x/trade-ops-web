@@ -115,6 +115,15 @@ export type InventoryLot = {
   movements: InventoryMovement[];
 };
 
+export type Warehouse = {
+  id: number;
+  name: string;
+  location: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type InventoryMovement = {
   id: string;
   inventoryLotId: string;

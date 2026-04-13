@@ -5,6 +5,7 @@ import {
   type InventoryLot,
   type PurchaseOrder,
   type Shipment,
+  type Warehouse,
   getJson,
   postJson,
 } from '../app/api';
@@ -73,6 +74,30 @@ function parseDecimal(value: string, fallback?: number) {
   }
 
   throw new Error(`Valor numerico invalido: ${value}`);
+}
+
+function getLotAgeInDays(receivedAt: string) {
+  const receivedDate = new Date(receivedAt);
+  const now = new Date();
+  const diffMs = now.getTime() - receivedDate.getTime();
+
+  if (Number.isNaN(diffMs) || diffMs < 0) {
+    return 0;
+  }
+
+  return Math.floor(diffMs / (1000 * 60 * 60 * 24));
+}
+
+function getAgingLabel(ageInDays: number) {
+  if (ageInDays >= 90) {
+    return '> 90 dias';
+  }
+
+  if (ageInDays >= 30) {
+    return '30-89 dias';
+  }
+
+  return '0-29 dias';
 }
 
 function buildShipmentItemOptions(
@@ -145,6 +170,7 @@ export function InventoryPage() {
   const { session } = useAuth();
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [shipments, setShipments] = useState<Shipment[]>([]);
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [lots, setLots] = useState<InventoryLot[]>([]);
   const [selectedLotId, setSelectedLotId] = useState('');
   const [receiveForm, setReceiveForm] = useState<ReceiveLotFormState>(
@@ -175,6 +201,15 @@ export function InventoryPage() {
     () => lots.find((lot) => String(lot.id) === selectedLotId) ?? null,
     [lots, selectedLotId],
   );
+
+  const warehousesById = useMemo(
+    () =>
+      new Map(warehouses.map((warehouse) => [String(warehouse.id), warehouse])),
+    [warehouses],
+  );
+
+  const selectedWarehouse =
+    warehousesById.get(receiveForm.warehouseId) ?? null;
 
   const syncReceiveFormWithShipmentItem = useCallback(
     (availableOptions: ShipmentItemOption[], nextShipmentItemId: string) => {
@@ -218,6 +253,24 @@ export function InventoryPage() {
     return response;
   }, [session?.accessToken]);
 
+  const loadWarehouses = useCallback(async () => {
+    const response = await getJson<Warehouse[]>(
+      '/inventory/warehouses',
+      session?.accessToken,
+    );
+    setWarehouses(response);
+    setReceiveForm((current) => ({
+      ...current,
+      warehouseId:
+        response.some((warehouse) => String(warehouse.id) === current.warehouseId)
+          ? current.warehouseId
+          : response.length > 0
+            ? String(response[0].id)
+            : current.warehouseId,
+    }));
+    return response;
+  }, [session?.accessToken]);
+
   const loadLots = useCallback(async () => {
     const response = await getJson<InventoryLot[]>(
       '/inventory/lots',
@@ -247,6 +300,7 @@ export function InventoryPage() {
         const [ordersResponse, shipmentsResponse] = await Promise.all([
           loadOrders(),
           loadShipments(),
+          loadWarehouses(),
         ]);
         await loadLots();
 
@@ -275,6 +329,7 @@ export function InventoryPage() {
     loadLots,
     loadOrders,
     loadShipments,
+    loadWarehouses,
     receiveForm.shipmentItemId,
     syncReceiveFormWithShipmentItem,
   ]);
@@ -304,6 +359,17 @@ export function InventoryPage() {
       parseDecimal(lot.availableQuantity, 0) * parseDecimal(lot.unitLandedCostUsd, 0),
     0,
   );
+  const averageAgeDays =
+    lots.length > 0
+      ? lots.reduce((sum, lot) => sum + getLotAgeInDays(lot.receivedAt), 0) /
+        lots.length
+      : 0;
+  const lotsOver30Days = lots.filter(
+    (lot) => getLotAgeInDays(lot.receivedAt) >= 30,
+  ).length;
+  const lotsOver90Days = lots.filter(
+    (lot) => getLotAgeInDays(lot.receivedAt) >= 90,
+  ).length;
 
   async function handleReceiveLot(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -440,18 +506,39 @@ export function InventoryPage() {
             </label>
 
             <label className="field">
-              <span>Warehouse ID</span>
-              <input
-                value={receiveForm.warehouseId}
-                onChange={(event) =>
-                  setReceiveForm((current) => ({
-                    ...current,
-                    warehouseId: event.target.value,
-                  }))
-                }
-                inputMode="numeric"
-                required
-              />
+              <span>Warehouse</span>
+              {warehouses.length > 0 ? (
+                <select
+                  value={receiveForm.warehouseId}
+                  onChange={(event) =>
+                    setReceiveForm((current) => ({
+                      ...current,
+                      warehouseId: event.target.value,
+                    }))
+                  }
+                  required
+                >
+                  {warehouses.map((warehouse) => (
+                    <option key={warehouse.id} value={warehouse.id}>
+                      {warehouse.name}
+                      {warehouse.location ? ` · ${warehouse.location}` : ''}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  value={receiveForm.warehouseId}
+                  onChange={(event) =>
+                    setReceiveForm((current) => ({
+                      ...current,
+                      warehouseId: event.target.value,
+                    }))
+                  }
+                  inputMode="numeric"
+                  placeholder="Warehouse ID manual"
+                  required
+                />
+              )}
             </label>
 
             <label className="field">
@@ -539,12 +626,29 @@ export function InventoryPage() {
                 {selectedShipmentItem.shipmentStatus} · qty shipped{' '}
                 {selectedShipmentItem.quantityShipped}
               </span>
+              <span>
+                Warehouse destino:{' '}
+                {selectedWarehouse
+                  ? `${selectedWarehouse.name}${
+                      selectedWarehouse.location
+                        ? ` · ${selectedWarehouse.location}`
+                        : ''
+                    }`
+                  : receiveForm.warehouseId || 'Sin seleccionar'}
+              </span>
             </div>
           ) : (
             <p className="muted">
               No hay shipment items disponibles. Primero crea y carga un embarque.
             </p>
           )}
+
+          {warehouses.length === 0 ? (
+            <p className="feedback feedback-warning">
+              No hay warehouses activos cargados desde backend. Puedes usar el ID
+              manual temporalmente, pero lo ideal es cargar el seed de bodegas.
+            </p>
+          ) : null}
 
           <div className="form-actions">
             <button
@@ -729,13 +833,25 @@ export function InventoryPage() {
               <span>Valor visible USD</span>
               <strong>{totalInventoryValueUsd.toFixed(2)}</strong>
             </div>
+            <div className="metric-chip">
+              <span>Edad prom. dias</span>
+              <strong>{averageAgeDays.toFixed(0)}</strong>
+            </div>
+            <div className="metric-chip">
+              <span>Lotes &gt; 30 dias</span>
+              <strong>{lotsOver30Days}</strong>
+            </div>
+            <div className="metric-chip">
+              <span>Lotes &gt; 90 dias</span>
+              <strong>{lotsOver90Days}</strong>
+            </div>
           </div>
 
           <div className="info-banner">
             <strong>Nota operativa</strong>
             <span>
-              `warehouseId` sigue manual por ahora porque aun no existe endpoint
-              frontend para catalogo de bodegas.
+              Aging calculado con `receivedAt` para detectar lotes que llevan mas
+              tiempo inmovilizados en bodega.
             </span>
           </div>
         </SectionCard>
@@ -765,8 +881,10 @@ export function InventoryPage() {
                 <thead>
                   <tr>
                     <th>Lot</th>
+                    <th>Warehouse</th>
                     <th>Product</th>
                     <th>Status</th>
+                    <th>Aging</th>
                     <th>Available</th>
                     <th>Reserved</th>
                     <th>Landed USD</th>
@@ -776,8 +894,13 @@ export function InventoryPage() {
                   {lots.map((lot) => (
                     <tr key={lot.id}>
                       <td>{lot.lotCode}</td>
+                      <td>
+                        {warehousesById.get(String(lot.warehouseId))?.name ??
+                          `Warehouse ${lot.warehouseId}`}
+                      </td>
                       <td>{lot.productId}</td>
                       <td>{lot.status}</td>
+                      <td>{getLotAgeInDays(lot.receivedAt)} dias</td>
                       <td>{lot.availableQuantity}</td>
                       <td>{lot.reservedQuantity}</td>
                       <td>{lot.unitLandedCostUsd}</td>
@@ -798,12 +921,29 @@ export function InventoryPage() {
           {selectedLot ? (
             <div className="stack-list">
               <div className="list-row">
-                <span>Warehouse ID</span>
-                <strong>{selectedLot.warehouseId}</strong>
+                <span>Warehouse</span>
+                <strong>
+                  {warehousesById.get(String(selectedLot.warehouseId))?.name ??
+                    `Warehouse ${selectedLot.warehouseId}`}
+                </strong>
+              </div>
+              <div className="list-row">
+                <span>Ubicacion</span>
+                <strong>
+                  {warehousesById.get(String(selectedLot.warehouseId))?.location ??
+                    'Sin ubicacion visible'}
+                </strong>
               </div>
               <div className="list-row">
                 <span>Shipment item</span>
                 <strong>{selectedLot.shipmentItemId ?? 'N/A'}</strong>
+              </div>
+              <div className="list-row">
+                <span>Aging</span>
+                <strong>
+                  {getLotAgeInDays(selectedLot.receivedAt)} dias ·{' '}
+                  {getAgingLabel(getLotAgeInDays(selectedLot.receivedAt))}
+                </strong>
               </div>
               <div className="list-row">
                 <span>Purchase unit cost USD</span>
