@@ -1,15 +1,55 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { useAuth } from '../app/auth';
 import {
   type CheckpointSummary,
+  type CustomsEntry,
   type DocumentUpload,
+  type InventoryLot,
   type SalesOrder,
   type SalesOrderProfitability,
+  type Shipment,
+  type Warehouse,
   getJson,
 } from '../app/api';
 import { KpiCard } from '../components/ui/KpiCard';
 import { SectionCard } from '../components/ui/SectionCard';
+
+function parseDecimal(value: string | number | null | undefined) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatUsd(value: number) {
+  return new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+function getLotAgeInDays(receivedAt: string) {
+  const receivedDate = new Date(receivedAt);
+  const now = new Date();
+  const diffMs = now.getTime() - receivedDate.getTime();
+
+  if (Number.isNaN(diffMs) || diffMs < 0) {
+    return 0;
+  }
+
+  return Math.floor(diffMs / (1000 * 60 * 60 * 24));
+}
+
+function getShipmentStatusGroup(status: string) {
+  if (status === 'delivered') {
+    return 'closed';
+  }
+
+  if (status === 'released' || status === 'arrived' || status === 'customs') {
+    return 'arrived';
+  }
+
+  return 'in_transit';
+}
 
 export function DashboardPage() {
   const { session } = useAuth();
@@ -17,8 +57,13 @@ export function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<CheckpointSummary[]>([]);
   const [uploads, setUploads] = useState<DocumentUpload[]>([]);
+  const [salesOrders, setSalesOrders] = useState<SalesOrder[]>([]);
   const [salesProfitability, setSalesProfitability] =
     useState<SalesOrderProfitability | null>(null);
+  const [shipments, setShipments] = useState<Shipment[]>([]);
+  const [customsEntries, setCustomsEntries] = useState<CustomsEntry[]>([]);
+  const [lots, setLots] = useState<InventoryLot[]>([]);
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
 
   useEffect(() => {
     async function load() {
@@ -26,7 +71,15 @@ export function DashboardPage() {
         setLoading(true);
         setError(null);
 
-        const [checkpointSummary, documentUploads, salesOrders] = await Promise.all([
+        const [
+          checkpointSummary,
+          documentUploads,
+          salesOrdersResponse,
+          shipmentsResponse,
+          customsEntriesResponse,
+          inventoryLotsResponse,
+          warehousesResponse,
+        ] = await Promise.all([
           getJson<CheckpointSummary[]>(
             '/procurement/checkpoints/summary',
             session?.accessToken,
@@ -36,14 +89,32 @@ export function DashboardPage() {
             session?.accessToken,
           ),
           getJson<SalesOrder[]>('/sales/orders', session?.accessToken),
+          getJson<Shipment[]>('/shipments', session?.accessToken),
+          getJson<CustomsEntry[]>('/customs/entries', session?.accessToken),
+          getJson<InventoryLot[]>('/inventory/lots', session?.accessToken),
+          getJson<Warehouse[]>('/inventory/warehouses', session?.accessToken).catch(
+            () => [],
+          ),
         ]);
 
         setSummary(checkpointSummary);
         setUploads(documentUploads);
+        setSalesOrders(salesOrdersResponse);
+        setShipments(shipmentsResponse);
+        setCustomsEntries(customsEntriesResponse);
+        setLots(inventoryLotsResponse);
+        setWarehouses(warehousesResponse);
 
-        if (salesOrders.length > 0) {
+        if (salesOrdersResponse.length > 0) {
+          const latestOrder = [...salesOrdersResponse].sort((left, right) => {
+            return (
+              new Date(right.orderDate).getTime() -
+              new Date(left.orderDate).getTime()
+            );
+          })[0];
+
           const profitability = await getJson<SalesOrderProfitability>(
-            `/finance/sales-orders/${salesOrders[0].id}/profitability`,
+            `/finance/sales-orders/${latestOrder.id}/profitability`,
             session?.accessToken,
           );
           setSalesProfitability(profitability);
@@ -64,11 +135,101 @@ export function DashboardPage() {
     void load();
   }, [session?.accessToken]);
 
+  const latestUpload = useMemo(
+    () =>
+      [...uploads].sort(
+        (left, right) =>
+          new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
+      )[0] ?? null,
+    [uploads],
+  );
+
+  const warehousesById = useMemo(
+    () => new Map(warehouses.map((warehouse) => [warehouse.id, warehouse])),
+    [warehouses],
+  );
+
   const totalOrders = summary.reduce((sum, item) => sum + item.ordersCount, 0);
   const totalArticles = summary.reduce(
     (sum, item) => sum + item.articlesQuantity,
     0,
   );
+  const totalInventoryValueUsd = lots.reduce(
+    (sum, lot) =>
+      sum +
+      parseDecimal(lot.availableQuantity) * parseDecimal(lot.unitLandedCostUsd),
+    0,
+  );
+  const agedLotsOver30 = lots.filter(
+    (lot) => getLotAgeInDays(lot.receivedAt) >= 30,
+  );
+  const agedLotsOver90 = lots.filter(
+    (lot) => getLotAgeInDays(lot.receivedAt) >= 90,
+  );
+
+  const activeShipments = useMemo(
+    () =>
+      shipments
+        .filter((shipment) => getShipmentStatusGroup(shipment.status) !== 'closed')
+        .sort((left, right) => {
+          return (
+            new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
+          );
+        }),
+    [shipments],
+  );
+
+  const openCustomsEntries = useMemo(
+    () =>
+      customsEntries.filter((entry) =>
+        ['pending', 'in_review'].includes(entry.status),
+      ),
+    [customsEntries],
+  );
+
+  const oldestLots = useMemo(
+    () =>
+      [...lots]
+        .sort(
+          (left, right) =>
+            getLotAgeInDays(right.receivedAt) - getLotAgeInDays(left.receivedAt),
+        )
+        .slice(0, 5),
+    [lots],
+  );
+
+  const warehouseMetrics = useMemo(() => {
+    const grouped = new Map<
+      string,
+      {
+        warehouseName: string;
+        lotsCount: number;
+        availableQuantity: number;
+        visibleUsd: number;
+      }
+    >();
+
+    for (const lot of lots) {
+      const warehouseName =
+        warehousesById.get(Number(lot.warehouseId))?.name ??
+        `Warehouse ${lot.warehouseId}`;
+      const current = grouped.get(lot.warehouseId) ?? {
+        warehouseName,
+        lotsCount: 0,
+        availableQuantity: 0,
+        visibleUsd: 0,
+      };
+
+      current.lotsCount += 1;
+      current.availableQuantity += parseDecimal(lot.availableQuantity);
+      current.visibleUsd +=
+        parseDecimal(lot.availableQuantity) * parseDecimal(lot.unitLandedCostUsd);
+
+      grouped.set(lot.warehouseId, current);
+    }
+
+    return [...grouped.values()].sort((left, right) => right.visibleUsd - left.visibleUsd);
+  }, [lots, warehousesById]);
 
   return (
     <div className="page-grid">
@@ -77,27 +238,42 @@ export function DashboardPage() {
           <p className="eyebrow">Operacion viva</p>
           <h2>Vision E2E del flujo completo</h2>
           <p className="hero-copy">
-            Esta primera version del frontend ya lee datos reales del backend:
-            checkpoints, documentos procesados y rentabilidad base.
+            El dashboard ya consolida compras, documentos, embarques, aduana,
+            inventario y rentabilidad base desde el backend real.
           </p>
         </div>
         <div className="kpi-grid">
           <KpiCard
             label="Pedidos en flujo"
             value={loading ? '...' : String(totalOrders)}
-            detail="Suma de checkpoints activos"
+            detail="Suma visible de checkpoints"
             tone="accent"
           />
           <KpiCard
             label="Articulos trazados"
             value={loading ? '...' : String(totalArticles)}
-            detail="Cantidad total visible en el flujo"
+            detail="Cantidad total visible en la cadena"
           />
           <KpiCard
-            label="Proformas registradas"
-            value={loading ? '...' : String(uploads.length)}
-            detail="Documentos con auditoria de validacion"
+            label="Embarques activos"
+            value={loading ? '...' : String(activeShipments.length)}
+            detail="No entregados aun"
+          />
+          <KpiCard
+            label="Aduanas abiertas"
+            value={loading ? '...' : String(openCustomsEntries.length)}
+            detail="Pendientes o en revision"
+          />
+          <KpiCard
+            label="Inventario visible USD"
+            value={loading ? '...' : formatUsd(totalInventoryValueUsd)}
+            detail="Disponible por costo landed"
             tone="success"
+          />
+          <KpiCard
+            label="Lotes > 30 dias"
+            value={loading ? '...' : String(agedLotsOver30.length)}
+            detail={`${agedLotsOver90.length} lotes sobre 90 dias`}
           />
         </div>
       </section>
@@ -114,6 +290,7 @@ export function DashboardPage() {
               <strong>{item.checkpoint}</strong>
               <span>{item.ordersCount} pedidos</span>
               <small>{item.articlesQuantity} articulos</small>
+              <small>USD {formatUsd(item.usdTotal)}</small>
             </article>
           ))}
         </div>
@@ -121,32 +298,158 @@ export function DashboardPage() {
 
       <div className="two-column-grid">
         <SectionCard
-          title="Ultima proforma procesada"
-          subtitle="Documento mas reciente en el pipeline documental"
+          title="Operacion logistica viva"
+          subtitle="Embarques que siguen avanzando dentro del flujo"
         >
-          {uploads.length === 0 ? (
-            <p className="muted">Todavia no hay uploads documentales.</p>
+          {activeShipments.length === 0 ? (
+            <p className="muted">No hay embarques activos en este momento.</p>
           ) : (
             <div className="stack-list">
-              <div className="list-row">
-                <span>Archivo</span>
-                <strong>{uploads[0].originalFileName}</strong>
-              </div>
-              <div className="list-row">
-                <span>Estado</span>
-                <strong>{uploads[0].status}</strong>
-              </div>
-              <div className="list-row">
-                <span>Extracciones</span>
-                <strong>{uploads[0].extractions.length}</strong>
-              </div>
+              {activeShipments.slice(0, 5).map((shipment) => (
+                <div key={shipment.id} className="list-row">
+                  <span>
+                    {shipment.shipmentNumber} · {shipment.transportMode} ·{' '}
+                    {shipment.originLocation ?? 'Origen N/A'} →{' '}
+                    {shipment.destinationLocation ?? 'Destino N/A'}
+                  </span>
+                  <strong>
+                    {shipment.status}
+                    {shipment.eta ? ` · ETA ${shipment.eta}` : ''}
+                  </strong>
+                </div>
+              ))}
             </div>
           )}
         </SectionCard>
 
         <SectionCard
+          title="Aduana abierta"
+          subtitle="Expedientes pendientes con costo ya visible"
+        >
+          {openCustomsEntries.length === 0 ? (
+            <p className="muted">No hay expedientes aduaneros abiertos.</p>
+          ) : (
+            <div className="stack-list">
+              {openCustomsEntries.slice(0, 5).map((entry) => {
+                const totalExpensesUsd = entry.expenses.reduce(
+                  (sum, expense) => sum + parseDecimal(expense.amountUsd),
+                  0,
+                );
+
+                return (
+                  <div key={entry.id} className="list-row">
+                    <span>
+                      {entry.entryNumber} · shipment #{entry.shipmentId} ·{' '}
+                      {entry.status}
+                    </span>
+                    <strong>USD {formatUsd(totalExpensesUsd)}</strong>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </SectionCard>
+      </div>
+
+      <div className="two-column-grid">
+        <SectionCard
+          title="Aging de inventario"
+          subtitle="Lotes mas envejecidos para seguimiento operativo"
+        >
+          {oldestLots.length === 0 ? (
+            <p className="muted">Todavia no hay lotes en inventario.</p>
+          ) : (
+            <div className="table-shell compact-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Lote</th>
+                    <th>Bodega</th>
+                    <th>Aging</th>
+                    <th>Disponible</th>
+                    <th>Visible USD</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {oldestLots.map((lot) => (
+                    <tr key={lot.id}>
+                      <td>{lot.lotCode}</td>
+                      <td>
+                        {warehousesById.get(Number(lot.warehouseId))?.name ??
+                          `Warehouse ${lot.warehouseId}`}
+                      </td>
+                      <td>{getLotAgeInDays(lot.receivedAt)} dias</td>
+                      <td>{lot.availableQuantity}</td>
+                      <td>
+                        {formatUsd(
+                          parseDecimal(lot.availableQuantity) *
+                            parseDecimal(lot.unitLandedCostUsd),
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </SectionCard>
+
+        <SectionCard
+          title="Valor por warehouse"
+          subtitle="Distribucion visible del inventario por bodega"
+        >
+          {warehouseMetrics.length === 0 ? (
+            <p className="muted">No hay lotes suficientes para agrupar por bodega.</p>
+          ) : (
+            <div className="stack-list">
+              {warehouseMetrics.map((warehouseMetric) => (
+                <div
+                  key={warehouseMetric.warehouseName}
+                  className="list-row"
+                >
+                  <span>
+                    {warehouseMetric.warehouseName} · {warehouseMetric.lotsCount}{' '}
+                    lotes
+                  </span>
+                  <strong>
+                    USD {formatUsd(warehouseMetric.visibleUsd)} · qty{' '}
+                    {warehouseMetric.availableQuantity.toFixed(2)}
+                  </strong>
+                </div>
+              ))}
+            </div>
+          )}
+        </SectionCard>
+      </div>
+
+      <div className="two-column-grid">
+        <SectionCard
+          title="Ultima proforma procesada"
+          subtitle="Documento mas reciente en el pipeline documental"
+        >
+          {latestUpload ? (
+            <div className="stack-list">
+              <div className="list-row">
+                <span>Archivo</span>
+                <strong>{latestUpload.originalFileName}</strong>
+              </div>
+              <div className="list-row">
+                <span>Estado</span>
+                <strong>{latestUpload.status}</strong>
+              </div>
+              <div className="list-row">
+                <span>Extracciones</span>
+                <strong>{latestUpload.extractions.length}</strong>
+              </div>
+            </div>
+          ) : (
+            <p className="muted">Todavia no hay uploads documentales.</p>
+          )}
+        </SectionCard>
+
+        <SectionCard
           title="Rentabilidad destacada"
-          subtitle="Orden de venta demo ya cerrada en el backend"
+          subtitle="Ultima orden de venta con analisis base"
         >
           {salesProfitability ? (
             <div className="stack-list">
@@ -169,8 +472,13 @@ export function DashboardPage() {
                 </strong>
               </div>
             </div>
-          ) : (
+          ) : salesOrders.length === 0 ? (
             <p className="muted">No hay ventas listas para analizar.</p>
+          ) : (
+            <p className="muted">
+              Hay ventas registradas, pero no fue posible cargar la rentabilidad
+              destacada.
+            </p>
           )}
         </SectionCard>
       </div>
