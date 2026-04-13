@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { useAuth } from '../app/auth';
 import {
@@ -271,7 +271,7 @@ export function DocumentsPage() {
       (extraction) => String(extraction.id) === selectedExtractionId,
     ) ?? null;
 
-  async function loadUploads() {
+  const loadUploads = useCallback(async () => {
     try {
       setError(null);
       const response = await getJson<DocumentUpload[]>(
@@ -291,11 +291,11 @@ export function DocumentsPage() {
           : 'No fue posible cargar las proformas procesadas.',
       );
     }
-  }
+  }, [session?.accessToken]);
 
   useEffect(() => {
     void loadUploads();
-  }, [session?.accessToken]);
+  }, [loadUploads]);
 
   useEffect(() => {
     if (extractionOptions.length === 0) {

@@ -2,6 +2,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useEffectEvent,
   useState,
   type PropsWithChildren,
 } from 'react';
@@ -114,17 +115,25 @@ function getInitialSession(): AuthSession | null {
 
 export function AuthProvider({ children }: PropsWithChildren) {
   const [session, setSession] = useState<AuthSession | null>(getInitialSession);
+  const clearExpiredSession = useEffectEvent(() => {
+    clearAuthSession();
+    setSession(null);
+  });
 
   useEffect(() => {
-    if (!session) {
+    if (!session?.expiresAt) {
       return;
     }
 
-    if (session.expiresAt && session.expiresAt <= Date.now()) {
-      clearAuthSession();
-      setSession(null);
-    }
-  }, [session]);
+    const timeoutMs = Math.max(session.expiresAt - Date.now(), 0);
+    const timeoutId = window.setTimeout(() => {
+      clearExpiredSession();
+    }, timeoutMs);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [session?.expiresAt]);
 
   async function login(input: LoginInput): Promise<void> {
     const response = await postJson<AuthResponse>('/auth/login', input);

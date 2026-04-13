@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { useAuth } from '../app/auth';
 import {
@@ -78,15 +78,15 @@ export function ProcurementPage() {
     getInitialOrderForm,
   );
 
-  async function loadSummary() {
+  const loadSummary = useCallback(async () => {
     const response = await getJson<CheckpointSummary[]>(
       '/procurement/checkpoints/summary',
       session?.accessToken,
     );
     setSummary(response);
-  }
+  }, [session?.accessToken]);
 
-  async function loadOrders() {
+  const loadOrders = useCallback(async () => {
     const response = await getJson<PurchaseOrder[]>(
       '/procurement/orders',
       session?.accessToken,
@@ -98,15 +98,15 @@ export function ProcurementPage() {
       }
       return response.length > 0 ? String(response[0].id) : '';
     });
-  }
+  }, [session?.accessToken]);
 
-  async function loadArticles(checkpoint: string) {
+  const loadArticles = useCallback(async (checkpoint: string) => {
     const response = await getJson<CheckpointArticle[]>(
       `/procurement/checkpoints/${checkpoint}/articles`,
       session?.accessToken,
     );
     setArticles(response);
-  }
+  }, [session?.accessToken]);
 
   useEffect(() => {
     async function loadPageData() {
@@ -127,7 +127,7 @@ export function ProcurementPage() {
     }
 
     void loadPageData();
-  }, [selectedCheckpoint, session?.accessToken]);
+  }, [loadArticles, loadOrders, loadSummary, selectedCheckpoint]);
 
   async function handleCreateOrder(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
