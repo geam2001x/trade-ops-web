@@ -6,6 +6,7 @@ import { CustomsPage } from '../pages/CustomsPage';
 import { DashboardPage } from '../pages/DashboardPage';
 import { DocumentsPage } from '../pages/DocumentsPage';
 import { FinancePage } from '../pages/FinancePage';
+import { InventoryPage } from '../pages/InventoryPage';
 import { LoginPage } from '../pages/LoginPage';
 import { NotFoundPage } from '../pages/NotFoundPage';
 import { ProcurementPage } from '../pages/ProcurementPage';
@@ -33,6 +34,7 @@ export const router = createBrowserRouter([
       { path: 'procurement', element: <ProcurementPage /> },
       { path: 'shipments', element: <ShipmentsPage /> },
       { path: 'customs', element: <CustomsPage /> },
+      { path: 'inventory', element: <InventoryPage /> },
       { path: 'sales', element: <SalesPage /> },
       { path: 'documents', element: <DocumentsPage /> },
       { path: 'finance', element: <FinancePage /> },

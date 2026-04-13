@@ -98,12 +98,33 @@ export type DocumentUpload = {
 export type InventoryLot = {
   id: string;
   productId: string;
+  purchaseOrderItemId: string;
+  shipmentItemId: string | null;
+  warehouseId: string;
   lotCode: string;
   receivedQuantity: string;
   availableQuantity: string;
   reservedQuantity: string;
   status: string;
+  receivedAt: string;
+  purchaseUnitCostUsd: string;
+  allocatedImportCostUsd: string;
   unitLandedCostUsd: string;
+  createdAt: string;
+  updatedAt: string;
+  movements: InventoryMovement[];
+};
+
+export type InventoryMovement = {
+  id: string;
+  inventoryLotId: string;
+  movementType: string;
+  quantity: string;
+  referenceType: string | null;
+  referenceId: string | null;
+  movementDate: string;
+  notes: string | null;
+  createdAt: string;
 };
 
 export type SalesOrder = {
