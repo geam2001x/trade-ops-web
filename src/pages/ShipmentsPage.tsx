@@ -8,6 +8,7 @@ import {
   patchJson,
   postJson,
 } from '../app/api';
+import { downloadCsv } from '../app/export';
 import { SectionCard } from '../components/ui/SectionCard';
 
 type ShipmentItemDraft = {
@@ -267,6 +268,105 @@ export function ShipmentsPage() {
     (sum, item) => sum + parseDecimal(item.quantityShipped, 0),
     0,
   );
+
+  function handleExportShipments() {
+    downloadCsv(
+      `shipments-${getTodayDate()}.csv`,
+      [
+        'shipment_id',
+        'shipment_number',
+        'purchase_order_id',
+        'transport_mode',
+        'status',
+        'carrier_name',
+        'origin_location',
+        'destination_location',
+        'tracking_reference',
+        'etd',
+        'eta',
+        'items_count',
+      ],
+      shipments.map((shipment) => [
+        shipment.id,
+        shipment.shipmentNumber,
+        shipment.purchaseOrderId,
+        shipment.transportMode,
+        shipment.status,
+        shipment.carrierName,
+        shipment.originLocation,
+        shipment.destinationLocation,
+        shipment.trackingReference,
+        shipment.etd,
+        shipment.eta,
+        shipment.items.length,
+      ]),
+    );
+  }
+
+  function handleExportSelectedShipmentDetail() {
+    if (!selectedShipment) {
+      return;
+    }
+
+    const itemRows = selectedShipment.items.map((item) => [
+      'item',
+      selectedShipment.shipmentNumber,
+      item.id,
+      item.productId,
+      item.purchaseOrderItemId,
+      item.quantityShipped,
+      null,
+      null,
+    ]);
+
+    const eventRows = [...selectedShipment.events]
+      .sort(
+        (left, right) =>
+          new Date(right.eventDate).getTime() - new Date(left.eventDate).getTime(),
+      )
+      .map((eventItem) => [
+        'event',
+        selectedShipment.shipmentNumber,
+        eventItem.id,
+        null,
+        null,
+        null,
+        eventItem.eventDate,
+        `${eventItem.eventType}${eventItem.location ? ` @ ${eventItem.location}` : ''}${
+          eventItem.description ? ` · ${eventItem.description}` : ''
+        }`,
+      ]);
+
+    downloadCsv(
+      `shipment-detail-${selectedShipment.shipmentNumber}-${getTodayDate()}.csv`,
+      [
+        'row_type',
+        'shipment_number',
+        'record_id',
+        'product_id',
+        'purchase_order_item_id',
+        'quantity',
+        'event_date',
+        'details',
+      ],
+      [
+        [
+          'summary',
+          selectedShipment.shipmentNumber,
+          selectedShipment.id,
+          null,
+          selectedShipment.purchaseOrderId,
+          null,
+          null,
+          `status=${selectedShipment.status}; transport=${selectedShipment.transportMode}; tracking=${
+            selectedShipment.trackingReference ?? 'N/A'
+          }; eta=${selectedShipment.eta ?? 'N/A'}`,
+        ],
+        ...itemRows,
+        ...eventRows,
+      ],
+    );
+  }
 
   async function handleCreateShipment(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -817,19 +917,29 @@ export function ShipmentsPage() {
           title="Embarques registrados"
           subtitle="Vista operativa del pipeline de transporte"
           action={
-            <select
-              className="select-input"
-              value={selectedShipmentId}
-              onChange={(currentEvent) =>
-                setSelectedShipmentId(currentEvent.target.value)
-              }
-            >
-              {shipments.map((shipment) => (
-                <option key={shipment.id} value={shipment.id}>
-                  {shipment.shipmentNumber}
-                </option>
-              ))}
-            </select>
+            <div className="form-actions">
+              <select
+                className="select-input"
+                value={selectedShipmentId}
+                onChange={(currentEvent) =>
+                  setSelectedShipmentId(currentEvent.target.value)
+                }
+              >
+                {shipments.map((shipment) => (
+                  <option key={shipment.id} value={shipment.id}>
+                    {shipment.shipmentNumber}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={handleExportShipments}
+                disabled={shipments.length === 0}
+              >
+                Exportar CSV
+              </button>
+            </div>
           }
         >
           {shipments.length > 0 ? (
@@ -865,6 +975,16 @@ export function ShipmentsPage() {
         <SectionCard
           title="Detalle del embarque"
           subtitle="Items, tracking y ultimos eventos"
+          action={
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={handleExportSelectedShipmentDetail}
+              disabled={!selectedShipment}
+            >
+              Exportar CSV
+            </button>
+          }
         >
           {selectedShipment ? (
             <div className="stack-list">

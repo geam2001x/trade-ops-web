@@ -8,6 +8,7 @@ import {
   patchJson,
   postJson,
 } from '../app/api';
+import { downloadCsv } from '../app/export';
 import { SectionCard } from '../components/ui/SectionCard';
 
 type CustomsEntryFormState = {
@@ -218,6 +219,62 @@ export function CustomsPage() {
       (sum, expense) => sum + parseDecimal(expense.amountUsd, 0),
       0,
     ) ?? 0;
+
+  function handleExportCustomsEntries() {
+    downloadCsv(
+      `customs-entries-${getTodayDate()}.csv`,
+      [
+        'entry_id',
+        'entry_number',
+        'shipment_number',
+        'status',
+        'arrival_date_chile',
+        'clearance_date',
+        'expenses_count',
+        'total_usd',
+      ],
+      entries.map((entry) => [
+        entry.id,
+        entry.entryNumber,
+        findShipmentNumber(entry.shipmentId),
+        entry.status,
+        entry.arrivalDateChile,
+        entry.clearanceDate,
+        entry.expenses.length,
+        entry.expenses
+          .reduce((sum, expense) => sum + parseDecimal(expense.amountUsd, 0), 0)
+          .toFixed(2),
+      ]),
+    );
+  }
+
+  function handleExportSelectedEntryDetail() {
+    if (!selectedEntry) {
+      return;
+    }
+
+    downloadCsv(
+      `customs-detail-${selectedEntry.entryNumber}-${getTodayDate()}.csv`,
+      [
+        'expense_date',
+        'expense_type',
+        'currency_code',
+        'amount_original',
+        'exchange_rate_to_usd',
+        'amount_usd',
+        'notes',
+      ],
+      selectedEntry.expenses.map((expense) => [
+        expense.expenseDate,
+        expense.expenseType,
+        expense.currencyCode,
+        expense.amountOriginal,
+        expense.exchangeRateToUsd,
+        expense.amountUsd,
+        expense.notes,
+      ]),
+    );
+  }
 
   async function handleCreateCustomsEntry(
     event: React.FormEvent<HTMLFormElement>,
@@ -697,19 +754,29 @@ export function CustomsPage() {
           title="Expedientes aduaneros"
           subtitle="Seguimiento de ingreso, revision y liberacion"
           action={
-            <select
-              className="select-input"
-              value={selectedEntryId}
-              onChange={(currentEvent) =>
-                setSelectedEntryId(currentEvent.target.value)
-              }
-            >
-              {entries.map((entry) => (
-                <option key={entry.id} value={entry.id}>
-                  {entry.entryNumber}
-                </option>
-              ))}
-            </select>
+            <div className="form-actions">
+              <select
+                className="select-input"
+                value={selectedEntryId}
+                onChange={(currentEvent) =>
+                  setSelectedEntryId(currentEvent.target.value)
+                }
+              >
+                {entries.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {entry.entryNumber}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={handleExportCustomsEntries}
+                disabled={entries.length === 0}
+              >
+                Exportar CSV
+              </button>
+            </div>
           }
         >
           {entries.length > 0 ? (
@@ -753,6 +820,16 @@ export function CustomsPage() {
         <SectionCard
           title="Detalle del expediente"
           subtitle="Gastos, fechas clave y trazabilidad financiera"
+          action={
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={handleExportSelectedEntryDetail}
+              disabled={!selectedEntry || selectedEntry.expenses.length === 0}
+            >
+              Exportar CSV
+            </button>
+          }
         >
           {selectedEntry ? (
             <div className="stack-list">

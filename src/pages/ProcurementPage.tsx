@@ -8,6 +8,7 @@ import {
   getJson,
   postJson,
 } from '../app/api';
+import { downloadCsv } from '../app/export';
 import { SectionCard } from '../components/ui/SectionCard';
 
 type PurchaseOrderFormState = {
@@ -274,6 +275,87 @@ export function ProcurementPage() {
   const lineTotalUsdPreview =
     quantityPreview > 0 ? quantityPreview * unitPriceUsdPreview : 0;
 
+  function handleExportCheckpointSummary() {
+    downloadCsv(
+      `procurement-checkpoints-${getTodayDate()}.csv`,
+      ['checkpoint', 'orders_count', 'articles_quantity', 'usd_total'],
+      summary.map((item) => [
+        item.checkpoint,
+        item.ordersCount,
+        item.articlesQuantity,
+        item.usdTotal.toFixed(2),
+      ]),
+    );
+  }
+
+  function handleExportOrders() {
+    downloadCsv(
+      `procurement-orders-${getTodayDate()}.csv`,
+      [
+        'order_id',
+        'order_number',
+        'supplier_id',
+        'currency_code',
+        'checkpoint',
+        'items_count',
+        'total_usd',
+        'order_date',
+      ],
+      orders.map((order) => [
+        order.id,
+        order.orderNumber,
+        order.supplierId,
+        order.currencyCode,
+        order.currentCheckpointStatus,
+        order.items.length,
+        order.items
+          .reduce((total, item) => total + Number(item.lineTotalUsd), 0)
+          .toFixed(2),
+        order.orderDate,
+      ]),
+    );
+  }
+
+  function handleExportCheckpointHistory() {
+    if (!selectedOrder) {
+      return;
+    }
+
+    downloadCsv(
+      `procurement-checkpoint-history-${selectedOrder.orderNumber}.csv`,
+      ['from_checkpoint', 'to_checkpoint', 'changed_by_user_id', 'changed_at', 'notes'],
+      selectedOrder.checkpointEvents.map((event) => [
+        event.fromCheckpoint ?? 'inicio',
+        event.toCheckpoint,
+        event.changedByUserId,
+        event.changedAt,
+        event.notes,
+      ]),
+    );
+  }
+
+  function handleExportCheckpointArticles() {
+    downloadCsv(
+      `procurement-articles-${selectedCheckpoint}-${getTodayDate()}.csv`,
+      [
+        'purchase_order_id',
+        'order_number',
+        'checkpoint',
+        'product_id',
+        'description',
+        'articles_quantity',
+      ],
+      articles.map((item) => [
+        item.purchaseOrderId,
+        item.orderNumber,
+        item.checkpoint,
+        item.productId,
+        item.productDescriptionSnapshot,
+        item.articlesQuantity,
+      ]),
+    );
+  }
+
   return (
     <div className="page-grid">
       <SectionCard
@@ -515,6 +597,16 @@ export function ProcurementPage() {
       <SectionCard
         title="Checkpoints operativos"
         subtitle="Seguimiento manual del pedido de compra/importacion"
+        action={
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={handleExportCheckpointSummary}
+            disabled={summary.length === 0}
+          >
+            Exportar CSV
+          </button>
+        }
       >
         {error ? <p className="feedback feedback-error">{error}</p> : null}
 
@@ -542,6 +634,16 @@ export function ProcurementPage() {
       <SectionCard
         title="Pedidos recientes"
         subtitle="Ultimas ordenes creadas desde procurement y desde documentos"
+        action={
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={handleExportOrders}
+            disabled={orders.length === 0}
+          >
+            Exportar CSV
+          </button>
+        }
       >
         <div className="table-actions">
           <label className="field field-span-two">
@@ -615,6 +717,16 @@ export function ProcurementPage() {
       <SectionCard
         title="Historial de checkpoints"
         subtitle="Auditoria de avances manuales y automaticos por pedido"
+        action={
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={handleExportCheckpointHistory}
+            disabled={!selectedOrder || selectedOrder.checkpointEvents.length === 0}
+          >
+            Exportar CSV
+          </button>
+        }
       >
         {orders.length === 0 ? (
           <p className="muted">Todavia no hay pedidos para auditar.</p>
@@ -686,6 +798,16 @@ export function ProcurementPage() {
       <SectionCard
         title="Articulos en el checkpoint seleccionado"
         subtitle={`Estado activo: ${selectedCheckpoint}`}
+        action={
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={handleExportCheckpointArticles}
+            disabled={articles.length === 0}
+          >
+            Exportar CSV
+          </button>
+        }
       >
         {articles.length === 0 ? (
           <p className="muted">
