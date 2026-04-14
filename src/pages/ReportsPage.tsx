@@ -83,6 +83,7 @@ export function ReportsPage() {
   const { session } = useAuth();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [summary, setSummary] = useState<CheckpointSummary[]>([]);
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [selectedCheckpoint, setSelectedCheckpoint] = useState('quotation');
@@ -441,6 +442,38 @@ export function ReportsPage() {
     }
 
     return usdValue * latestExchangeRate.rate;
+  }
+
+  function getPresetLabel() {
+    if (activePreset === 'live-operation') {
+      return 'Operacion viva';
+    }
+
+    if (activePreset === 'finance') {
+      return 'Finanzas';
+    }
+
+    if (activePreset === 'slow-inventory') {
+      return 'Inventario lento';
+    }
+
+    if (activePreset === 'monthly-close') {
+      return 'Cierre mensual';
+    }
+
+    return 'Custom';
+  }
+
+  function runBatchExport(exporters: Array<() => void>, label: string) {
+    exporters.forEach((exporter, index) => {
+      window.setTimeout(() => {
+        exporter();
+      }, index * 180);
+    });
+
+    setSuccessMessage(
+      `Exportacion por lote iniciada para ${label}. El navegador descargara ${exporters.length} archivos CSV.`,
+    );
   }
 
   function resetFilters() {
@@ -895,6 +928,59 @@ export function ReportsPage() {
     );
   }
 
+  function handleExportPresetBatch() {
+    const exporters =
+      activePreset === 'live-operation'
+        ? [
+            handleExportCheckpointSummary,
+            handleExportCheckpointArticles,
+            handleExportShipments,
+            handleExportCustomsEntries,
+          ]
+        : activePreset === 'finance'
+          ? [
+              handleExportSalesOrders,
+              handleExportFxHistory,
+              handleExportCustomsEntries,
+              handleExportDocumentUploads,
+            ]
+          : activePreset === 'slow-inventory'
+            ? [
+                handleExportInventoryLots,
+                handleExportWarehouseSummary,
+                handleExportSelectedLotMovements,
+              ]
+            : activePreset === 'monthly-close'
+              ? [
+                  handleExportOrders,
+                  handleExportShipments,
+                  handleExportCustomsEntries,
+                  handleExportSalesOrders,
+                  handleExportFxHistory,
+                  handleExportDocumentUploads,
+                ]
+              : [
+                  handleExportCheckpointSummary,
+                  handleExportOrders,
+                  handleExportShipments,
+                  handleExportCustomsEntries,
+                  handleExportInventoryLots,
+                  handleExportSalesOrders,
+                  handleExportFxHistory,
+                  handleExportDocumentUploads,
+                ];
+
+    const availableExporters = exporters.filter((exporter) => {
+      if (exporter === handleExportSelectedLotMovements) {
+        return Boolean(selectedLot);
+      }
+
+      return true;
+    });
+
+    runBatchExport(availableExporters, getPresetLabel());
+  }
+
   return (
     <div className="page-grid">
       <section className="hero-panel">
@@ -970,6 +1056,13 @@ export function ReportsPage() {
           >
             Reset filtros
           </button>
+          <button
+            type="button"
+            className="primary-button"
+            onClick={handleExportPresetBatch}
+          >
+            Exportar preset activo
+          </button>
         </div>
 
         {latestExchangeRate ? (
@@ -977,6 +1070,10 @@ export function ReportsPage() {
             Snapshot activo: 1 USD = {latestExchangeRate.rate.toFixed(2)} CLP ·
             {` ${latestExchangeRate.sourceName}`}
           </p>
+        ) : null}
+
+        {successMessage ? (
+          <p className="feedback feedback-success">{successMessage}</p>
         ) : null}
       </section>
 
