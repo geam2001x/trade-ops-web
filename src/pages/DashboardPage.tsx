@@ -13,6 +13,7 @@ import {
   type Warehouse,
   getJson,
 } from '../app/api';
+import { downloadCsv } from '../app/export';
 import { KpiCard } from '../components/ui/KpiCard';
 import { SectionCard } from '../components/ui/SectionCard';
 
@@ -56,6 +57,10 @@ function getShipmentStatusGroup(status: string) {
   }
 
   return 'in_transit';
+}
+
+function getTodayDate() {
+  return new Date().toISOString().slice(0, 10);
 }
 
 export function DashboardPage() {
@@ -255,6 +260,121 @@ export function DashboardPage() {
     return [...grouped.values()].sort((left, right) => right.visibleUsd - left.visibleUsd);
   }, [lots, warehousesById]);
 
+  function handleExportCheckpointSummary() {
+    downloadCsv(
+      `dashboard-checkpoints-${getTodayDate()}.csv`,
+      ['checkpoint', 'orders_count', 'articles_quantity', 'usd_total', 'clp_total'],
+      summary.map((item) => [
+        item.checkpoint,
+        item.ordersCount,
+        item.articlesQuantity,
+        item.usdTotal.toFixed(2),
+        latestExchangeRate ? (item.usdTotal * latestExchangeRate.rate).toFixed(0) : null,
+      ]),
+    );
+  }
+
+  function handleExportActiveShipments() {
+    downloadCsv(
+      `dashboard-active-shipments-${getTodayDate()}.csv`,
+      [
+        'shipment_number',
+        'status',
+        'transport_mode',
+        'origin',
+        'destination',
+        'tracking_reference',
+        'eta',
+        'updated_at',
+      ],
+      activeShipments.map((shipment) => [
+        shipment.shipmentNumber,
+        shipment.status,
+        shipment.transportMode,
+        shipment.originLocation,
+        shipment.destinationLocation,
+        shipment.trackingReference,
+        shipment.eta,
+        shipment.updatedAt,
+      ]),
+    );
+  }
+
+  function handleExportOpenCustomsEntries() {
+    downloadCsv(
+      `dashboard-open-customs-${getTodayDate()}.csv`,
+      [
+        'entry_number',
+        'shipment_id',
+        'status',
+        'entry_date',
+        'total_expenses_usd',
+        'total_expenses_clp',
+      ],
+      openCustomsEntries.map((entry) => {
+        const totalExpensesUsd = entry.expenses.reduce(
+          (sum, expense) => sum + parseDecimal(expense.amountUsd),
+          0,
+        );
+
+        return [
+          entry.entryNumber,
+          entry.shipmentId,
+          entry.status,
+          entry.arrivalDateChile,
+          totalExpensesUsd.toFixed(2),
+          latestExchangeRate ? (totalExpensesUsd * latestExchangeRate.rate).toFixed(0) : null,
+        ];
+      }),
+    );
+  }
+
+  function handleExportInventoryAging() {
+    downloadCsv(
+      `dashboard-inventory-aging-${getTodayDate()}.csv`,
+      [
+        'lot_code',
+        'warehouse',
+        'age_days',
+        'aging_bucket',
+        'available_quantity',
+        'visible_usd',
+        'visible_clp',
+      ],
+      oldestLots.map((lot) => {
+        const visibleUsd =
+          parseDecimal(lot.availableQuantity) * parseDecimal(lot.unitLandedCostUsd);
+        const ageDays = getLotAgeInDays(lot.receivedAt);
+
+        return [
+          lot.lotCode,
+          warehousesById.get(Number(lot.warehouseId))?.name ?? `Warehouse ${lot.warehouseId}`,
+          ageDays,
+          ageDays >= 90 ? '>90' : ageDays >= 30 ? '30-89' : '0-29',
+          lot.availableQuantity,
+          visibleUsd.toFixed(2),
+          latestExchangeRate ? (visibleUsd * latestExchangeRate.rate).toFixed(0) : null,
+        ];
+      }),
+    );
+  }
+
+  function handleExportWarehouseMetrics() {
+    downloadCsv(
+      `dashboard-warehouse-value-${getTodayDate()}.csv`,
+      ['warehouse', 'lots_count', 'available_quantity', 'visible_usd', 'visible_clp'],
+      warehouseMetrics.map((warehouseMetric) => [
+        warehouseMetric.warehouseName,
+        warehouseMetric.lotsCount,
+        warehouseMetric.availableQuantity.toFixed(2),
+        warehouseMetric.visibleUsd.toFixed(2),
+        latestExchangeRate
+          ? (warehouseMetric.visibleUsd * latestExchangeRate.rate).toFixed(0)
+          : null,
+      ]),
+    );
+  }
+
   return (
     <div className="page-grid">
       <section className="hero-panel">
@@ -329,6 +449,16 @@ export function DashboardPage() {
       <SectionCard
         title="Resumen por checkpoint"
         subtitle="Vista rapida del estado actual del flujo operativo"
+        action={
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={handleExportCheckpointSummary}
+            disabled={summary.length === 0}
+          >
+            Exportar CSV
+          </button>
+        }
       >
         <div className="checkpoint-grid">
           {summary.map((item) => (
@@ -346,6 +476,16 @@ export function DashboardPage() {
         <SectionCard
           title="Operacion logistica viva"
           subtitle="Embarques que siguen avanzando dentro del flujo"
+          action={
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={handleExportActiveShipments}
+              disabled={activeShipments.length === 0}
+            >
+              Exportar CSV
+            </button>
+          }
         >
           {activeShipments.length === 0 ? (
             <p className="muted">No hay embarques activos en este momento.</p>
@@ -371,6 +511,16 @@ export function DashboardPage() {
         <SectionCard
           title="Aduana abierta"
           subtitle="Expedientes pendientes con costo ya visible"
+          action={
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={handleExportOpenCustomsEntries}
+              disabled={openCustomsEntries.length === 0}
+            >
+              Exportar CSV
+            </button>
+          }
         >
           {openCustomsEntries.length === 0 ? (
             <p className="muted">No hay expedientes aduaneros abiertos.</p>
@@ -401,6 +551,16 @@ export function DashboardPage() {
         <SectionCard
           title="Aging de inventario"
           subtitle="Lotes mas envejecidos para seguimiento operativo"
+          action={
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={handleExportInventoryAging}
+              disabled={oldestLots.length === 0}
+            >
+              Exportar CSV
+            </button>
+          }
         >
           {oldestLots.length === 0 ? (
             <p className="muted">Todavia no hay lotes en inventario.</p>
@@ -443,6 +603,16 @@ export function DashboardPage() {
         <SectionCard
           title="Valor por warehouse"
           subtitle="Distribucion visible del inventario por bodega"
+          action={
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={handleExportWarehouseMetrics}
+              disabled={warehouseMetrics.length === 0}
+            >
+              Exportar CSV
+            </button>
+          }
         >
           {warehouseMetrics.length === 0 ? (
             <p className="muted">No hay lotes suficientes para agrupar por bodega.</p>

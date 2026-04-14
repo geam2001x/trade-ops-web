@@ -9,6 +9,7 @@ import {
   getJson,
   postJson,
 } from '../app/api';
+import { downloadCsv } from '../app/export';
 import { SectionCard } from '../components/ui/SectionCard';
 
 type ShipmentItemOption = {
@@ -370,6 +371,98 @@ export function InventoryPage() {
   const lotsOver90Days = lots.filter(
     (lot) => getLotAgeInDays(lot.receivedAt) >= 90,
   ).length;
+
+  function handleExportInventorySummary() {
+    downloadCsv(
+      `inventory-summary-${getTodayDate()}.csv`,
+      [
+        'lots_count',
+        'available_quantity',
+        'reserved_quantity',
+        'visible_value_usd',
+        'average_age_days',
+        'lots_over_30_days',
+        'lots_over_90_days',
+      ],
+      [
+        [
+          lots.length,
+          totalAvailableQuantity.toFixed(2),
+          totalReservedQuantity.toFixed(2),
+          totalInventoryValueUsd.toFixed(2),
+          averageAgeDays.toFixed(0),
+          lotsOver30Days,
+          lotsOver90Days,
+        ],
+      ],
+    );
+  }
+
+  function handleExportInventoryLots() {
+    downloadCsv(
+      `inventory-lots-${getTodayDate()}.csv`,
+      [
+        'lot_code',
+        'warehouse',
+        'warehouse_location',
+        'product_id',
+        'status',
+        'age_days',
+        'aging_bucket',
+        'received_quantity',
+        'available_quantity',
+        'reserved_quantity',
+        'purchase_unit_cost_usd',
+        'allocated_import_cost_usd',
+        'unit_landed_cost_usd',
+      ],
+      lots.map((lot) => {
+        const ageDays = getLotAgeInDays(lot.receivedAt);
+        const warehouse = warehousesById.get(String(lot.warehouseId));
+
+        return [
+          lot.lotCode,
+          warehouse?.name ?? `Warehouse ${lot.warehouseId}`,
+          warehouse?.location ?? null,
+          lot.productId,
+          lot.status,
+          ageDays,
+          getAgingLabel(ageDays),
+          lot.receivedQuantity,
+          lot.availableQuantity,
+          lot.reservedQuantity,
+          lot.purchaseUnitCostUsd,
+          lot.allocatedImportCostUsd,
+          lot.unitLandedCostUsd,
+        ];
+      }),
+    );
+  }
+
+  function handleExportSelectedLotMovements() {
+    if (!selectedLot) {
+      return;
+    }
+
+    downloadCsv(
+      `inventory-lot-movements-${selectedLot.lotCode}-${getTodayDate()}.csv`,
+      ['movement_date', 'movement_type', 'quantity', 'reference_type', 'reference_id', 'notes'],
+      [...selectedLot.movements]
+        .sort(
+          (left, right) =>
+            new Date(right.movementDate).getTime() -
+            new Date(left.movementDate).getTime(),
+        )
+        .map((movement) => [
+          movement.movementDate,
+          movement.movementType,
+          movement.quantity,
+          movement.referenceType,
+          movement.referenceId,
+          movement.notes,
+        ]),
+    );
+  }
 
   async function handleReceiveLot(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -815,6 +908,16 @@ export function InventoryPage() {
         <SectionCard
           title="Resumen de inventario"
           subtitle="Foto rapida del stock y del valor visible"
+          action={
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={handleExportInventorySummary}
+              disabled={lots.length === 0}
+            >
+              Exportar CSV
+            </button>
+          }
         >
           <div className="metric-strip">
             <div className="metric-chip">
@@ -862,17 +965,27 @@ export function InventoryPage() {
           title="Lotes en inventario"
           subtitle="Recepcion, disponibilidad y costo por lote"
           action={
-            <select
-              className="select-input"
-              value={selectedLotId}
-              onChange={(event) => setSelectedLotId(event.target.value)}
-            >
-              {lots.map((lot) => (
-                <option key={lot.id} value={lot.id}>
-                  {lot.lotCode}
-                </option>
-              ))}
-            </select>
+            <div className="form-actions">
+              <select
+                className="select-input"
+                value={selectedLotId}
+                onChange={(event) => setSelectedLotId(event.target.value)}
+              >
+                {lots.map((lot) => (
+                  <option key={lot.id} value={lot.id}>
+                    {lot.lotCode}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={handleExportInventoryLots}
+                disabled={lots.length === 0}
+              >
+                Exportar CSV
+              </button>
+            </div>
           }
         >
           {lots.length > 0 ? (
@@ -917,6 +1030,16 @@ export function InventoryPage() {
         <SectionCard
           title="Detalle del lote"
           subtitle="Movimientos, costos y referencias del inventario seleccionado"
+          action={
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={handleExportSelectedLotMovements}
+              disabled={!selectedLot}
+            >
+              Exportar CSV
+            </button>
+          }
         >
           {selectedLot ? (
             <div className="stack-list">
