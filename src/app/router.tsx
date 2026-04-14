@@ -10,6 +10,7 @@ import { InventoryPage } from '../pages/InventoryPage';
 import { LoginPage } from '../pages/LoginPage';
 import { NotFoundPage } from '../pages/NotFoundPage';
 import { ProcurementPage } from '../pages/ProcurementPage';
+import { ReportsPage } from '../pages/ReportsPage';
 import { SalesPage } from '../pages/SalesPage';
 import { ShipmentsPage } from '../pages/ShipmentsPage';
 
@@ -38,6 +39,7 @@ export const router = createBrowserRouter([
       { path: 'sales', element: <SalesPage /> },
       { path: 'documents', element: <DocumentsPage /> },
       { path: 'finance', element: <FinancePage /> },
+      { path: 'reports', element: <ReportsPage /> },
       { path: '*', element: <NotFoundPage /> },
     ],
   },

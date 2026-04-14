@@ -12,6 +12,7 @@ const navigationItems = [
   { to: '/sales', label: 'Ventas', caption: 'Retail y wholesale' },
   { to: '/documents', label: 'Proformas', caption: 'Carga y validacion' },
   { to: '/finance', label: 'Finanzas', caption: 'Lotes y ventas' },
+  { to: '/reports', label: 'Reportes', caption: 'Centro exportable CSV' },
 ];
 
 export function AppShell() {
