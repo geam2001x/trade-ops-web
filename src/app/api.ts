@@ -142,6 +142,9 @@ export type SalesOrder = {
   saleType: string;
   status: string;
   orderDate: string;
+  currencyCode: string;
+  exchangeRateToUsd: string;
+  totalOriginal: string;
   totalUsd: string;
 };
 

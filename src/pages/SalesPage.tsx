@@ -3,11 +3,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../app/auth';
 import {
   type InventoryLot,
+  type LatestExchangeRate,
   type SalesOrder,
   getJson,
   patchJson,
   postJson,
 } from '../app/api';
+import { downloadCsv } from '../app/export';
 import { SectionCard } from '../components/ui/SectionCard';
 
 type SalesFormState = {
@@ -76,10 +78,25 @@ function parseDecimal(value: string, fallback?: number) {
   throw new Error(`Valor numerico invalido: ${value}`);
 }
 
+function formatUsd(value: number) {
+  return new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+function formatClp(value: number) {
+  return new Intl.NumberFormat('es-CL', {
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
 export function SalesPage() {
   const { session } = useAuth();
   const [orders, setOrders] = useState<SalesOrder[]>([]);
   const [lots, setLots] = useState<InventoryLot[]>([]);
+  const [latestExchangeRate, setLatestExchangeRate] =
+    useState<LatestExchangeRate | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -97,12 +114,17 @@ export function SalesPage() {
     async function loadData() {
       try {
         setError(null);
-        const [ordersResponse, lotsResponse] = await Promise.all([
+        const [ordersResponse, lotsResponse, latestRateResponse] = await Promise.all([
           getJson<SalesOrder[]>('/sales/orders', session?.accessToken),
           getJson<InventoryLot[]>('/inventory/lots', session?.accessToken),
+          getJson<LatestExchangeRate>(
+            '/finance/exchange-rates/latest?base=USD&quote=CLP',
+            session?.accessToken,
+          ).catch(() => null),
         ]);
         setOrders(ordersResponse);
         setLots(lotsResponse);
+        setLatestExchangeRate(latestRateResponse);
         setForm((current) => ({
           ...current,
           inventoryLotId:
@@ -144,6 +166,25 @@ export function SalesPage() {
     }));
   }, [selectedLot]);
 
+  useEffect(() => {
+    if (form.currencyCode !== 'CLP' || !latestExchangeRate) {
+      return;
+    }
+
+    setForm((current) => {
+      const currentRate = parseDecimal(current.exchangeRateToUsd, 0);
+
+      if (currentRate > 0 && currentRate !== 1) {
+        return current;
+      }
+
+      return {
+        ...current,
+        exchangeRateToUsd: String(latestExchangeRate.rate),
+      };
+    });
+  }, [form.currencyCode, latestExchangeRate]);
+
   const quantity = parseDecimal(form.quantity, 0);
   const unitPriceOriginal = parseDecimal(form.unitPriceOriginal, 0);
   const exchangeRateToUsd = parseDecimal(
@@ -158,6 +199,48 @@ export function SalesPage() {
         : 0;
   const lineTotalOriginal = quantity * unitPriceOriginal;
   const lineTotalUsd = quantity * unitPriceUsd;
+  const snapshotRate = latestExchangeRate?.rate ?? null;
+  const snapshotBuyRate = latestExchangeRate?.buyRate ?? null;
+  const snapshotSellRate = latestExchangeRate?.sellRate ?? null;
+  const lineTotalClpFromUsd = snapshotRate ? lineTotalUsd * snapshotRate : null;
+
+  function handleExportSalesOrders() {
+    downloadCsv(
+      `sales-orders-${getTodayDate()}.csv`,
+      [
+        'order_number',
+        'sale_type',
+        'status',
+        'order_date',
+        'currency_code',
+        'exchange_rate_to_usd',
+        'total_original',
+        'total_usd',
+        'reference_total_clp',
+        'bcch_rate_clp',
+        'bank_buy_rate_clp',
+        'bank_sell_rate_clp',
+      ],
+      orders.map((order) => {
+        const totalUsd = parseDecimal(order.totalUsd, 0);
+
+        return [
+          order.orderNumber,
+          order.saleType,
+          order.status,
+          order.orderDate,
+          order.currencyCode,
+          order.exchangeRateToUsd,
+          order.totalOriginal,
+          totalUsd.toFixed(2),
+          snapshotRate ? (totalUsd * snapshotRate).toFixed(0) : null,
+          snapshotRate,
+          snapshotBuyRate,
+          snapshotSellRate,
+        ];
+      }),
+    );
+  }
 
   async function handleCreateSalesOrder(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -223,12 +306,17 @@ export function SalesPage() {
           current.currencyCode === 'USD' ? '1' : current.exchangeRateToUsd,
       }));
 
-      const [ordersResponse, lotsResponse] = await Promise.all([
+      const [ordersResponse, lotsResponse, latestRateResponse] = await Promise.all([
         getJson<SalesOrder[]>('/sales/orders', session?.accessToken),
         getJson<InventoryLot[]>('/inventory/lots', session?.accessToken),
+        getJson<LatestExchangeRate>(
+          '/finance/exchange-rates/latest?base=USD&quote=CLP',
+          session?.accessToken,
+        ).catch(() => null),
       ]);
       setOrders(ordersResponse);
       setLots(lotsResponse);
+      setLatestExchangeRate(latestRateResponse);
       setStatusForm((current) => ({
         ...current,
         salesOrderId:
@@ -301,12 +389,25 @@ export function SalesPage() {
     <div className="page-grid">
       <SectionCard
         title="Crear venta"
-        subtitle="Formulario real conectado a sales con consumo directo de lotes"
+        subtitle="Formulario real conectado a sales con consumo directo de lotes y conversion USD / CLP"
       >
         {error ? <p className="feedback feedback-error">{error}</p> : null}
         {successMessage ? (
           <p className="feedback feedback-success">{successMessage}</p>
         ) : null}
+
+        <div className="info-banner" style={{ marginBottom: '1rem' }}>
+          <strong>Tipo de cambio del dia</strong>
+          <span>
+            {latestExchangeRate
+              ? `BCCh USD/CLP ${formatClp(latestExchangeRate.rate)}${
+                  latestExchangeRate.buySellSourceName
+                    ? ` · Banco compra ${snapshotBuyRate ? formatClp(snapshotBuyRate) : 'N/D'} · Banco vende ${snapshotSellRate ? formatClp(snapshotSellRate) : 'N/D'}`
+                    : ''
+                }`
+              : 'No hay snapshot USD/CLP disponible. Puedes seguir trabajando en USD o indicar manualmente el TC a USD.'}
+          </span>
+        </div>
 
         <form className="stack-form" onSubmit={handleCreateSalesOrder}>
           <div className="form-grid form-grid-three">
@@ -524,7 +625,15 @@ export function SalesPage() {
             </div>
             <div className="metric-chip">
               <span>Total USD</span>
-              <strong>{lineTotalUsd.toFixed(2)} USD</strong>
+              <strong>{formatUsd(lineTotalUsd)} USD</strong>
+            </div>
+            <div className="metric-chip">
+              <span>Total CLP referencial</span>
+              <strong>
+                {lineTotalClpFromUsd !== null
+                  ? `${formatClp(lineTotalClpFromUsd)} CLP`
+                  : 'N/D'}
+              </strong>
             </div>
           </div>
 
@@ -542,7 +651,17 @@ export function SalesPage() {
 
       <SectionCard
         title="Ventas recientes"
-        subtitle="Listado simple para validar que la API recibio la venta"
+        subtitle="Listado simple con lectura en USD y CLP usando el snapshot del dia"
+        action={
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={handleExportSalesOrders}
+            disabled={orders.length === 0}
+          >
+            Exportar CSV
+          </button>
+        }
       >
         {orders.length === 0 ? (
           <p className="muted">Todavia no hay ventas registradas.</p>
@@ -556,6 +675,7 @@ export function SalesPage() {
                   <th>Estado</th>
                   <th>Fecha</th>
                   <th>Total USD</th>
+                  <th>Total CLP ref.</th>
                 </tr>
               </thead>
               <tbody>
@@ -565,13 +685,24 @@ export function SalesPage() {
                     <td>{order.saleType}</td>
                     <td>{order.status}</td>
                     <td>{order.orderDate}</td>
-                    <td>{order.totalUsd}</td>
+                    <td>{formatUsd(parseDecimal(order.totalUsd, 0))}</td>
+                    <td>
+                      {snapshotRate
+                        ? formatClp(parseDecimal(order.totalUsd, 0) * snapshotRate)
+                        : 'N/D'}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         )}
+        {latestExchangeRate ? (
+          <p className="muted" style={{ marginTop: '0.8rem' }}>
+            Exportacion referencial con snapshot activo: 1 USD ={' '}
+            {formatClp(latestExchangeRate.rate)} CLP.
+          </p>
+        ) : null}
       </SectionCard>
 
       <SectionCard
