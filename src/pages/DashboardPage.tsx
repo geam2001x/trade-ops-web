@@ -6,6 +6,7 @@ import {
   type CustomsEntry,
   type DocumentUpload,
   type InventoryLot,
+  type LatestExchangeRate,
   type SalesOrder,
   type SalesOrderProfitability,
   type Shipment,
@@ -24,6 +25,12 @@ function formatUsd(value: number) {
   return new Intl.NumberFormat('en-US', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
+  }).format(value);
+}
+
+function formatClp(value: number) {
+  return new Intl.NumberFormat('es-CL', {
+    maximumFractionDigits: 0,
   }).format(value);
 }
 
@@ -55,6 +62,7 @@ export function DashboardPage() {
   const { session } = useAuth();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [currencyView, setCurrencyView] = useState<'USD' | 'CLP'>('USD');
   const [summary, setSummary] = useState<CheckpointSummary[]>([]);
   const [uploads, setUploads] = useState<DocumentUpload[]>([]);
   const [salesOrders, setSalesOrders] = useState<SalesOrder[]>([]);
@@ -64,6 +72,8 @@ export function DashboardPage() {
   const [customsEntries, setCustomsEntries] = useState<CustomsEntry[]>([]);
   const [lots, setLots] = useState<InventoryLot[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [latestExchangeRate, setLatestExchangeRate] =
+    useState<LatestExchangeRate | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -79,6 +89,7 @@ export function DashboardPage() {
           customsEntriesResponse,
           inventoryLotsResponse,
           warehousesResponse,
+          latestExchangeRateResponse,
         ] = await Promise.all([
           getJson<CheckpointSummary[]>(
             '/procurement/checkpoints/summary',
@@ -95,6 +106,10 @@ export function DashboardPage() {
           getJson<Warehouse[]>('/inventory/warehouses', session?.accessToken).catch(
             () => [],
           ),
+          getJson<LatestExchangeRate>(
+            '/finance/exchange-rates/latest?base=USD&quote=CLP',
+            session?.accessToken,
+          ).catch(() => null),
         ]);
 
         setSummary(checkpointSummary);
@@ -104,6 +119,7 @@ export function DashboardPage() {
         setCustomsEntries(customsEntriesResponse);
         setLots(inventoryLotsResponse);
         setWarehouses(warehousesResponse);
+        setLatestExchangeRate(latestExchangeRateResponse);
 
         if (salesOrdersResponse.length > 0) {
           const latestOrder = [...salesOrdersResponse].sort((left, right) => {
@@ -148,6 +164,14 @@ export function DashboardPage() {
     () => new Map(warehouses.map((warehouse) => [warehouse.id, warehouse])),
     [warehouses],
   );
+
+  function formatMoneyFromUsd(usdValue: number) {
+    if (currencyView === 'CLP' && latestExchangeRate) {
+      return `CLP ${formatClp(usdValue * latestExchangeRate.rate)}`;
+    }
+
+    return `USD ${formatUsd(usdValue)}`;
+  }
 
   const totalOrders = summary.reduce((sum, item) => sum + item.ordersCount, 0);
   const totalArticles = summary.reduce(
@@ -241,6 +265,28 @@ export function DashboardPage() {
             El dashboard ya consolida compras, documentos, embarques, aduana,
             inventario y rentabilidad base desde el backend real.
           </p>
+          <div className="form-actions">
+            <button
+              type="button"
+              className={currencyView === 'USD' ? 'primary-button' : 'ghost-button'}
+              onClick={() => setCurrencyView('USD')}
+            >
+              Ver en USD
+            </button>
+            <button
+              type="button"
+              className={currencyView === 'CLP' ? 'primary-button' : 'ghost-button'}
+              onClick={() => setCurrencyView('CLP')}
+              disabled={!latestExchangeRate}
+            >
+              Ver en CLP
+            </button>
+          </div>
+          <p className="muted">
+            {latestExchangeRate
+              ? `Tipo de cambio ${latestExchangeRate.baseCurrencyCode}/${latestExchangeRate.quoteCurrencyCode}: ${latestExchangeRate.rate.toFixed(2)} · fuente ${latestExchangeRate.sourceName} · ${new Date(latestExchangeRate.rateDate).toLocaleString('es-CL')}${latestExchangeRate.buyRate === null && latestExchangeRate.sellRate === null ? ' · BCCh entrega referencia oficial, no puntas compra/venta bancarias.' : ''}`
+              : 'Sin snapshot de tipo de cambio cargado. La vista monetaria queda en USD.'}
+          </p>
         </div>
         <div className="kpi-grid">
           <KpiCard
@@ -265,8 +311,8 @@ export function DashboardPage() {
             detail="Pendientes o en revision"
           />
           <KpiCard
-            label="Inventario visible USD"
-            value={loading ? '...' : formatUsd(totalInventoryValueUsd)}
+            label={`Inventario visible ${currencyView}`}
+            value={loading ? '...' : formatMoneyFromUsd(totalInventoryValueUsd)}
             detail="Disponible por costo landed"
             tone="success"
           />
@@ -290,7 +336,7 @@ export function DashboardPage() {
               <strong>{item.checkpoint}</strong>
               <span>{item.ordersCount} pedidos</span>
               <small>{item.articlesQuantity} articulos</small>
-              <small>USD {formatUsd(item.usdTotal)}</small>
+              <small>{formatMoneyFromUsd(item.usdTotal)}</small>
             </article>
           ))}
         </div>
@@ -342,7 +388,7 @@ export function DashboardPage() {
                       {entry.entryNumber} · shipment #{entry.shipmentId} ·{' '}
                       {entry.status}
                     </span>
-                    <strong>USD {formatUsd(totalExpensesUsd)}</strong>
+                    <strong>{formatMoneyFromUsd(totalExpensesUsd)}</strong>
                   </div>
                 );
               })}
@@ -381,7 +427,7 @@ export function DashboardPage() {
                       <td>{getLotAgeInDays(lot.receivedAt)} dias</td>
                       <td>{lot.availableQuantity}</td>
                       <td>
-                        {formatUsd(
+                        {formatMoneyFromUsd(
                           parseDecimal(lot.availableQuantity) *
                             parseDecimal(lot.unitLandedCostUsd),
                         )}
@@ -412,7 +458,7 @@ export function DashboardPage() {
                     lotes
                   </span>
                   <strong>
-                    USD {formatUsd(warehouseMetric.visibleUsd)} · qty{' '}
+                    {formatMoneyFromUsd(warehouseMetric.visibleUsd)} · qty{' '}
                     {warehouseMetric.availableQuantity.toFixed(2)}
                   </strong>
                 </div>
@@ -458,12 +504,14 @@ export function DashboardPage() {
                 <strong>{salesProfitability.orderNumber}</strong>
               </div>
               <div className="list-row">
-                <span>Revenue USD</span>
-                <strong>{salesProfitability.revenueUsd.toFixed(2)}</strong>
+                <span>Revenue {currencyView}</span>
+                <strong>{formatMoneyFromUsd(salesProfitability.revenueUsd)}</strong>
               </div>
               <div className="list-row">
-                <span>Gross margin USD</span>
-                <strong>{salesProfitability.grossMarginUsd.toFixed(2)}</strong>
+                <span>Gross margin {currencyView}</span>
+                <strong>
+                  {formatMoneyFromUsd(salesProfitability.grossMarginUsd)}
+                </strong>
               </div>
               <div className="list-row">
                 <span>ROI %</span>
