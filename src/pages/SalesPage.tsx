@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { useAuth } from '../app/auth';
 import {
+  type Customer,
   type InventoryLot,
   type LatestExchangeRate,
+  type Product,
   type SalesOrder,
   getJson,
   patchJson,
@@ -95,6 +97,8 @@ export function SalesPage() {
   const { session } = useAuth();
   const [orders, setOrders] = useState<SalesOrder[]>([]);
   const [lots, setLots] = useState<InventoryLot[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [latestExchangeRate, setLatestExchangeRate] =
     useState<LatestExchangeRate | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -110,13 +114,36 @@ export function SalesPage() {
     [lots, form.inventoryLotId],
   );
 
+  const customersById = useMemo(
+    () => new Map(customers.map((customer) => [String(customer.id), customer])),
+    [customers],
+  );
+
+  const productsById = useMemo(
+    () => new Map(products.map((product) => [String(product.id), product])),
+    [products],
+  );
+
+  const selectedCustomer = customersById.get(form.customerId) ?? null;
+  const selectedLotProduct = selectedLot
+    ? productsById.get(String(selectedLot.productId)) ?? null
+    : null;
+
   useEffect(() => {
     async function loadData() {
       try {
         setError(null);
-        const [ordersResponse, lotsResponse, latestRateResponse] = await Promise.all([
+        const [
+          ordersResponse,
+          lotsResponse,
+          customersResponse,
+          productsResponse,
+          latestRateResponse,
+        ] = await Promise.all([
           getJson<SalesOrder[]>('/sales/orders', session?.accessToken),
           getJson<InventoryLot[]>('/inventory/lots', session?.accessToken),
+          getJson<Customer[]>('/master-data/customers', session?.accessToken),
+          getJson<Product[]>('/master-data/products', session?.accessToken),
           getJson<LatestExchangeRate>(
             '/finance/exchange-rates/latest?base=USD&quote=CLP',
             session?.accessToken,
@@ -124,12 +151,17 @@ export function SalesPage() {
         ]);
         setOrders(ordersResponse);
         setLots(lotsResponse);
+        setCustomers(customersResponse);
+        setProducts(productsResponse);
         setLatestExchangeRate(latestRateResponse);
         setForm((current) => ({
           ...current,
           inventoryLotId:
             current.inventoryLotId ||
             (lotsResponse.length > 0 ? String(lotsResponse[0].id) : ''),
+          customerId:
+            current.customerId ||
+            (customersResponse.length > 0 ? String(customersResponse[0].id) : ''),
         }));
         setStatusForm((current) => ({
           ...current,
@@ -162,9 +194,27 @@ export function SalesPage() {
       ...current,
       productDescriptionSnapshot:
         current.productDescriptionSnapshot ||
+        selectedLotProduct?.name ||
         `Producto ${selectedLot.productId} · ${selectedLot.lotCode}`,
+      unitPriceOriginal:
+        current.unitPriceOriginal !== '0'
+          ? current.unitPriceOriginal
+          : selectedLotProduct?.defaultSalePriceUsd ?? current.unitPriceOriginal,
     }));
-  }, [selectedLot]);
+  }, [selectedLot, selectedLotProduct]);
+
+  useEffect(() => {
+    if (!selectedCustomer) {
+      return;
+    }
+
+    setForm((current) => ({
+      ...current,
+      customerNameSnapshot: current.customerNameSnapshot || selectedCustomer.name,
+      customerTaxIdSnapshot:
+        current.customerTaxIdSnapshot || selectedCustomer.taxId || '',
+    }));
+  }, [selectedCustomer]);
 
   useEffect(() => {
     if (form.currencyCode !== 'CLP' || !latestExchangeRate) {
@@ -301,14 +351,23 @@ export function SalesPage() {
       setForm((current) => ({
         ...getInitialSalesForm(),
         inventoryLotId: current.inventoryLotId,
+        customerId: current.customerId,
         currencyCode: current.currencyCode,
         exchangeRateToUsd:
           current.currencyCode === 'USD' ? '1' : current.exchangeRateToUsd,
       }));
 
-      const [ordersResponse, lotsResponse, latestRateResponse] = await Promise.all([
+      const [
+        ordersResponse,
+        lotsResponse,
+        customersResponse,
+        productsResponse,
+        latestRateResponse,
+      ] = await Promise.all([
         getJson<SalesOrder[]>('/sales/orders', session?.accessToken),
         getJson<InventoryLot[]>('/inventory/lots', session?.accessToken),
+        getJson<Customer[]>('/master-data/customers', session?.accessToken),
+        getJson<Product[]>('/master-data/products', session?.accessToken),
         getJson<LatestExchangeRate>(
           '/finance/exchange-rates/latest?base=USD&quote=CLP',
           session?.accessToken,
@@ -316,6 +375,8 @@ export function SalesPage() {
       ]);
       setOrders(ordersResponse);
       setLots(lotsResponse);
+      setCustomers(customersResponse);
+      setProducts(productsResponse);
       setLatestExchangeRate(latestRateResponse);
       setStatusForm((current) => ({
         ...current,
@@ -394,6 +455,12 @@ export function SalesPage() {
         {error ? <p className="feedback feedback-error">{error}</p> : null}
         {successMessage ? (
           <p className="feedback feedback-success">{successMessage}</p>
+        ) : null}
+        {customers.length === 0 ? (
+          <p className="feedback feedback-warning">
+            Aun no hay clientes activos en Maestros. Puedes seguir digitando el
+            cliente manualmente, pero conviene cargar el catalogo.
+          </p>
         ) : null}
 
         <div className="info-banner" style={{ marginBottom: '1rem' }}>
@@ -494,6 +561,31 @@ export function SalesPage() {
           </div>
 
           <div className="form-grid form-grid-four">
+            <label className="field">
+              <span>Cliente del catalogo</span>
+              <select
+                value={form.customerId}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    customerId: event.target.value,
+                    customerNameSnapshot:
+                      customersById.get(event.target.value)?.name ?? current.customerNameSnapshot,
+                    customerTaxIdSnapshot:
+                      (customersById.get(event.target.value)?.taxId ||
+                        current.customerTaxIdSnapshot),
+                  }))
+                }
+              >
+                <option value="">Seleccion manual / sin catalogo</option>
+                {customers.map((customer) => (
+                  <option key={customer.id} value={customer.id}>
+                    #{customer.id} · {customer.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
             <label className="field field-span-two">
               <span>Cliente (nombre)</span>
               <input
@@ -509,7 +601,7 @@ export function SalesPage() {
             </label>
 
             <label className="field">
-              <span>Cliente ID</span>
+              <span>Cliente ID manual</span>
               <input
                 value={form.customerId}
                 onChange={(event) =>

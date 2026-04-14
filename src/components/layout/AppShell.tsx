@@ -9,6 +9,7 @@ const navigationItems = [
   { to: '/shipments', label: 'Embarques', caption: 'Air / sea / land' },
   { to: '/customs', label: 'Aduana', caption: 'Expedientes y gastos' },
   { to: '/inventory', label: 'Inventario', caption: 'Lotes y movimientos' },
+  { to: '/masters', label: 'Maestros', caption: 'Catalogos y bodegas' },
   { to: '/sales', label: 'Ventas', caption: 'Retail y wholesale' },
   { to: '/documents', label: 'Proformas', caption: 'Carga y validacion' },
   { to: '/finance', label: 'Finanzas', caption: 'Lotes y ventas' },

@@ -8,6 +8,7 @@ import { DocumentsPage } from '../pages/DocumentsPage';
 import { FinancePage } from '../pages/FinancePage';
 import { InventoryPage } from '../pages/InventoryPage';
 import { LoginPage } from '../pages/LoginPage';
+import { MastersPage } from '../pages/MastersPage';
 import { NotFoundPage } from '../pages/NotFoundPage';
 import { ProcurementPage } from '../pages/ProcurementPage';
 import { ReportsPage } from '../pages/ReportsPage';
@@ -36,6 +37,7 @@ export const router = createBrowserRouter([
       { path: 'shipments', element: <ShipmentsPage /> },
       { path: 'customs', element: <CustomsPage /> },
       { path: 'inventory', element: <InventoryPage /> },
+      { path: 'masters', element: <MastersPage /> },
       { path: 'sales', element: <SalesPage /> },
       { path: 'documents', element: <DocumentsPage /> },
       { path: 'finance', element: <FinancePage /> },

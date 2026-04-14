@@ -115,6 +115,45 @@ export type InventoryLot = {
   movements: InventoryMovement[];
 };
 
+export type Supplier = {
+  id: number;
+  name: string;
+  taxId: string | null;
+  countryCode: string;
+  contactName: string | null;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type Customer = {
+  id: number;
+  customerType: string;
+  name: string;
+  taxId: string | null;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type Product = {
+  id: number;
+  sku: string;
+  name: string;
+  description: string | null;
+  unitMeasure: string;
+  defaultSalePriceUsd: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type Warehouse = {
   id: number;
   name: string;

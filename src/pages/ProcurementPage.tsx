@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { useAuth } from '../app/auth';
 import {
   type CheckpointArticle,
   type CheckpointSummary,
+  type Product,
   type PurchaseOrder,
+  type Supplier,
   getJson,
   postJson,
 } from '../app/api';
@@ -33,14 +35,14 @@ function getTodayDate() {
 
 function getInitialOrderForm(): PurchaseOrderFormState {
   return {
-    supplierId: '1',
+    supplierId: '',
     proformaDocumentUploadId: '',
     orderNumber: '',
     orderDate: getTodayDate(),
     currencyCode: 'USD',
     paymentTerms: '50% advance / 50% before dispatch',
     notes: '',
-    productId: '1',
+    productId: '',
     productDescriptionSnapshot: '',
     quantityOrdered: '1',
     unitMeasure: 'unit',
@@ -67,6 +69,8 @@ export function ProcurementPage() {
   const { session } = useAuth();
   const [summary, setSummary] = useState<CheckpointSummary[]>([]);
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [selectedCheckpoint, setSelectedCheckpoint] = useState('quotation');
   const [articles, setArticles] = useState<CheckpointArticle[]>([]);
   const [selectedOrderId, setSelectedOrderId] = useState('');
@@ -78,6 +82,18 @@ export function ProcurementPage() {
   const [orderForm, setOrderForm] = useState<PurchaseOrderFormState>(
     getInitialOrderForm,
   );
+
+  const suppliersById = useMemo(
+    () => new Map(suppliers.map((supplier) => [String(supplier.id), supplier])),
+    [suppliers],
+  );
+
+  const productsById = useMemo(
+    () => new Map(products.map((product) => [String(product.id), product])),
+    [products],
+  );
+
+  const selectedProduct = productsById.get(orderForm.productId) ?? null;
 
   const loadSummary = useCallback(async () => {
     const response = await getJson<CheckpointSummary[]>(
@@ -109,6 +125,22 @@ export function ProcurementPage() {
     setArticles(response);
   }, [session?.accessToken]);
 
+  const loadSuppliers = useCallback(async () => {
+    const response = await getJson<Supplier[]>(
+      '/master-data/suppliers',
+      session?.accessToken,
+    );
+    setSuppliers(response);
+  }, [session?.accessToken]);
+
+  const loadProducts = useCallback(async () => {
+    const response = await getJson<Product[]>(
+      '/master-data/products',
+      session?.accessToken,
+    );
+    setProducts(response);
+  }, [session?.accessToken]);
+
   useEffect(() => {
     async function loadPageData() {
       try {
@@ -117,6 +149,8 @@ export function ProcurementPage() {
           loadSummary(),
           loadOrders(),
           loadArticles(selectedCheckpoint),
+          loadSuppliers(),
+          loadProducts(),
         ]);
       } catch (loadError) {
         setError(
@@ -128,13 +162,50 @@ export function ProcurementPage() {
     }
 
     void loadPageData();
-  }, [loadArticles, loadOrders, loadSummary, selectedCheckpoint]);
+  }, [
+    loadArticles,
+    loadOrders,
+    loadProducts,
+    loadSummary,
+    loadSuppliers,
+    selectedCheckpoint,
+  ]);
+
+  useEffect(() => {
+    setOrderForm((current) => ({
+      ...current,
+      supplierId:
+        current.supplierId || (suppliers.length > 0 ? String(suppliers[0].id) : ''),
+      productId:
+        current.productId || (products.length > 0 ? String(products[0].id) : ''),
+    }));
+  }, [products, suppliers]);
+
+  useEffect(() => {
+    if (!selectedProduct) {
+      return;
+    }
+
+    setOrderForm((current) => ({
+      ...current,
+      productDescriptionSnapshot:
+        current.productDescriptionSnapshot || selectedProduct.name,
+      unitMeasure: current.unitMeasure || selectedProduct.unitMeasure || 'unit',
+    }));
+  }, [selectedProduct]);
 
   async function handleCreateOrder(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     if (!session?.user.id) {
       setError('La sesion no tiene un userId valido para crear pedidos.');
+      return;
+    }
+
+    if (!orderForm.supplierId || !orderForm.productId) {
+      setError(
+        'Necesitas al menos un proveedor y un producto activo en Maestros para crear pedidos.',
+      );
       return;
     }
 
@@ -203,6 +274,8 @@ export function ProcurementPage() {
         loadOrders(),
         loadSummary(),
         loadArticles(selectedCheckpoint),
+        loadSuppliers(),
+        loadProducts(),
       ]);
     } catch (submitError) {
       setError(
@@ -294,7 +367,7 @@ export function ProcurementPage() {
       [
         'order_id',
         'order_number',
-        'supplier_id',
+        'supplier',
         'currency_code',
         'checkpoint',
         'items_count',
@@ -304,7 +377,7 @@ export function ProcurementPage() {
       orders.map((order) => [
         order.id,
         order.orderNumber,
-        order.supplierId,
+        suppliersById.get(String(order.supplierId))?.name ?? `#${order.supplierId}`,
         order.currencyCode,
         order.currentCheckpointStatus,
         order.items.length,
@@ -362,11 +435,18 @@ export function ProcurementPage() {
         title="Crear pedido de compra"
         subtitle="Formulario real conectado a procurement para registrar una orden inicial"
       >
+        {suppliers.length === 0 || products.length === 0 ? (
+          <p className="feedback feedback-warning">
+            Para crear pedidos necesitas al menos un proveedor y un producto activo
+            en Maestros.
+          </p>
+        ) : null}
+
         <form className="stack-form" onSubmit={handleCreateOrder}>
           <div className="form-grid form-grid-three">
             <label className="field">
-              <span>Supplier ID</span>
-              <input
+              <span>Proveedor</span>
+              <select
                 value={orderForm.supplierId}
                 onChange={(event) =>
                   setOrderForm((current) => ({
@@ -374,9 +454,14 @@ export function ProcurementPage() {
                     supplierId: event.target.value,
                   }))
                 }
-                inputMode="numeric"
                 required
-              />
+              >
+                {suppliers.map((supplier) => (
+                  <option key={supplier.id} value={supplier.id}>
+                    #{supplier.id} · {supplier.name}
+                  </option>
+                ))}
+              </select>
             </label>
 
             <label className="field">
@@ -462,18 +547,27 @@ export function ProcurementPage() {
 
           <div className="form-grid form-grid-four">
             <label className="field">
-              <span>Product ID</span>
-              <input
+              <span>Producto</span>
+              <select
                 value={orderForm.productId}
                 onChange={(event) =>
                   setOrderForm((current) => ({
                     ...current,
                     productId: event.target.value,
+                    productDescriptionSnapshot:
+                      productsById.get(event.target.value)?.name ?? '',
+                    unitMeasure:
+                      productsById.get(event.target.value)?.unitMeasure ?? 'unit',
                   }))
                 }
-                inputMode="numeric"
                 required
-              />
+              >
+                {products.map((product) => (
+                  <option key={product.id} value={product.id}>
+                    #{product.id} · {product.sku} · {product.name}
+                  </option>
+                ))}
+              </select>
             </label>
 
             <label className="field">
@@ -679,7 +773,10 @@ export function ProcurementPage() {
                   return (
                     <tr key={order.id}>
                       <td>{order.orderNumber}</td>
-                      <td>{order.supplierId}</td>
+                      <td>
+                        {suppliersById.get(String(order.supplierId))?.name ??
+                          `#${order.supplierId}`}
+                      </td>
                       <td>{order.currencyCode}</td>
                       <td>{order.currentCheckpointStatus}</td>
                       <td>{order.items.length}</td>

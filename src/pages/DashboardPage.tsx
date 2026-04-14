@@ -47,6 +47,36 @@ function getLotAgeInDays(receivedAt: string) {
   return Math.floor(diffMs / (1000 * 60 * 60 * 24));
 }
 
+function getDaysSince(dateValue: string | null | undefined) {
+  if (!dateValue) {
+    return 0;
+  }
+
+  const targetDate = new Date(dateValue);
+  const now = new Date();
+  const diffMs = now.getTime() - targetDate.getTime();
+
+  if (Number.isNaN(diffMs) || diffMs < 0) {
+    return 0;
+  }
+
+  return Math.floor(diffMs / (1000 * 60 * 60 * 24));
+}
+
+function isDatePast(dateValue: string | null | undefined) {
+  if (!dateValue) {
+    return false;
+  }
+
+  const targetDate = new Date(`${dateValue}T23:59:59`);
+
+  if (Number.isNaN(targetDate.getTime())) {
+    return false;
+  }
+
+  return targetDate.getTime() < Date.now();
+}
+
 function getShipmentStatusGroup(status: string) {
   if (status === 'delivered') {
     return 'closed';
@@ -260,6 +290,77 @@ export function DashboardPage() {
     return [...grouped.values()].sort((left, right) => right.visibleUsd - left.visibleUsd);
   }, [lots, warehousesById]);
 
+  const delayedShipments = useMemo(
+    () =>
+      activeShipments.filter(
+        (shipment) =>
+          ['planned', 'in_origin', 'in_transit'].includes(shipment.status) &&
+          isDatePast(shipment.eta),
+      ),
+    [activeShipments],
+  );
+
+  const customsAlerts = useMemo(
+    () =>
+      openCustomsEntries.filter((entry) => {
+        const referenceDate = entry.arrivalDateChile ?? entry.createdAt;
+        return getDaysSince(referenceDate) >= 3;
+      }),
+    [openCustomsEntries],
+  );
+
+  const slowInventoryAlerts = useMemo(
+    () =>
+      lots.filter(
+        (lot) =>
+          parseDecimal(lot.availableQuantity) > 0 &&
+          getLotAgeInDays(lot.receivedAt) >= 30,
+      ),
+    [lots],
+  );
+
+  const criticalSlowInventoryAlerts = useMemo(
+    () =>
+      slowInventoryAlerts.filter(
+        (lot) => getLotAgeInDays(lot.receivedAt) >= 90,
+      ),
+    [slowInventoryAlerts],
+  );
+
+  const lowStockAlerts = useMemo(
+    () =>
+      lots.filter((lot) => {
+        const availableQuantity = parseDecimal(lot.availableQuantity);
+        return availableQuantity > 0 && availableQuantity <= 5;
+      }),
+    [lots],
+  );
+
+  const salesFollowUpAlerts = useMemo(
+    () =>
+      salesOrders.filter((order) => {
+        const daysOpen = getDaysSince(order.orderDate);
+
+        if (['quoted', 'confirmed'].includes(order.status)) {
+          return daysOpen >= 3;
+        }
+
+        if (order.status === 'dispatched') {
+          return daysOpen >= 2;
+        }
+
+        return false;
+      }),
+    [salesOrders],
+  );
+
+  const criticalAlertsCount =
+    delayedShipments.length +
+    customsAlerts.length +
+    criticalSlowInventoryAlerts.length +
+    lowStockAlerts.length +
+    salesFollowUpAlerts.length;
+
   function handleExportCheckpointSummary() {
     downloadCsv(
       `dashboard-checkpoints-${getTodayDate()}.csv`,
@@ -375,6 +476,68 @@ export function DashboardPage() {
     );
   }
 
+  function handleExportOperationalAlerts() {
+    downloadCsv(
+      `dashboard-operational-alerts-${getTodayDate()}.csv`,
+      [
+        'category',
+        'severity',
+        'reference',
+        'status',
+        'days_open',
+        'quantity',
+        'notes',
+      ],
+      [
+        ...delayedShipments.map((shipment) => [
+          'shipment_delay',
+          'critical',
+          shipment.shipmentNumber,
+          shipment.status,
+          shipment.eta ? getDaysSince(shipment.eta) : 0,
+          shipment.items.length,
+          `${shipment.originLocation ?? 'Origen N/D'} -> ${shipment.destinationLocation ?? 'Destino N/D'}`,
+        ]),
+        ...customsAlerts.map((entry) => [
+          'customs_pending',
+          'warning',
+          entry.entryNumber,
+          entry.status,
+          getDaysSince(entry.arrivalDateChile ?? entry.createdAt),
+          entry.expenses.length,
+          `Shipment #${entry.shipmentId}`,
+        ]),
+        ...criticalSlowInventoryAlerts.map((lot) => [
+          'slow_inventory',
+          'critical',
+          lot.lotCode,
+          lot.status,
+          getLotAgeInDays(lot.receivedAt),
+          parseDecimal(lot.availableQuantity).toFixed(2),
+          warehousesById.get(Number(lot.warehouseId))?.name ?? `Warehouse ${lot.warehouseId}`,
+        ]),
+        ...lowStockAlerts.map((lot) => [
+          'low_stock',
+          'warning',
+          lot.lotCode,
+          lot.status,
+          getLotAgeInDays(lot.receivedAt),
+          parseDecimal(lot.availableQuantity).toFixed(2),
+          `Producto ${lot.productId}`,
+        ]),
+        ...salesFollowUpAlerts.map((order) => [
+          'sales_follow_up',
+          'warning',
+          order.orderNumber,
+          order.status,
+          getDaysSince(order.orderDate),
+          null,
+          order.saleType,
+        ]),
+      ],
+    );
+  }
+
   return (
     <div className="page-grid">
       <section className="hero-panel">
@@ -441,10 +604,145 @@ export function DashboardPage() {
             value={loading ? '...' : String(agedLotsOver30.length)}
             detail={`${agedLotsOver90.length} lotes sobre 90 dias`}
           />
+          <KpiCard
+            label="Alertas operativas"
+            value={loading ? '...' : String(criticalAlertsCount)}
+            detail="Retrasos, stock bajo y seguimientos abiertos"
+            tone="accent"
+          />
         </div>
       </section>
 
       {error ? <p className="feedback feedback-error">{error}</p> : null}
+
+      <SectionCard
+        title="Alertas operativas"
+        subtitle="Riesgos vivos detectados desde embarques, aduana, inventario y ventas"
+        action={
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={handleExportOperationalAlerts}
+            disabled={criticalAlertsCount === 0}
+          >
+            Exportar CSV
+          </button>
+        }
+      >
+        <div className="alert-grid">
+          <article className="alert-card alert-card-critical">
+            <div className="alert-card-head">
+              <strong>Embarques retrasados</strong>
+              <span>{delayedShipments.length}</span>
+            </div>
+            <p className="muted">
+              ETA vencida y aun sin llegar a destino operativo.
+            </p>
+            {delayedShipments.length === 0 ? (
+              <p className="muted">Sin retrasos detectados.</p>
+            ) : (
+              <div className="alert-preview-list">
+                {delayedShipments.slice(0, 3).map((shipment) => (
+                  <div key={shipment.id} className="list-row">
+                    <span>{shipment.shipmentNumber}</span>
+                    <strong>{shipment.eta ?? 'ETA N/D'}</strong>
+                  </div>
+                ))}
+              </div>
+            )}
+          </article>
+
+          <article className="alert-card alert-card-warning">
+            <div className="alert-card-head">
+              <strong>Aduana demorada</strong>
+              <span>{customsAlerts.length}</span>
+            </div>
+            <p className="muted">
+              Expedientes abiertos por 3 o mas dias desde arribo o registro.
+            </p>
+            {customsAlerts.length === 0 ? (
+              <p className="muted">Sin expedientes en seguimiento urgente.</p>
+            ) : (
+              <div className="alert-preview-list">
+                {customsAlerts.slice(0, 3).map((entry) => (
+                  <div key={entry.id} className="list-row">
+                    <span>{entry.entryNumber}</span>
+                    <strong>
+                      {getDaysSince(entry.arrivalDateChile ?? entry.createdAt)} dias
+                    </strong>
+                  </div>
+                ))}
+              </div>
+            )}
+          </article>
+
+          <article className="alert-card alert-card-critical">
+            <div className="alert-card-head">
+              <strong>Inventario lento</strong>
+              <span>{criticalSlowInventoryAlerts.length}</span>
+            </div>
+            <p className="muted">
+              Lotes con 90 o mas dias en bodega y stock aun disponible.
+            </p>
+            {criticalSlowInventoryAlerts.length === 0 ? (
+              <p className="muted">Sin lotes lentos en zona critica.</p>
+            ) : (
+              <div className="alert-preview-list">
+                {criticalSlowInventoryAlerts.slice(0, 3).map((lot) => (
+                  <div key={lot.id} className="list-row">
+                    <span>{lot.lotCode}</span>
+                    <strong>{getLotAgeInDays(lot.receivedAt)} dias</strong>
+                  </div>
+                ))}
+              </div>
+            )}
+          </article>
+
+          <article className="alert-card alert-card-warning">
+            <div className="alert-card-head">
+              <strong>Stock bajo</strong>
+              <span>{lowStockAlerts.length}</span>
+            </div>
+            <p className="muted">
+              Lotes con 5 unidades o menos disponibles para venta o reserva.
+            </p>
+            {lowStockAlerts.length === 0 ? (
+              <p className="muted">Sin quiebres inminentes detectados.</p>
+            ) : (
+              <div className="alert-preview-list">
+                {lowStockAlerts.slice(0, 3).map((lot) => (
+                  <div key={lot.id} className="list-row">
+                    <span>{lot.lotCode}</span>
+                    <strong>{parseDecimal(lot.availableQuantity).toFixed(2)}</strong>
+                  </div>
+                ))}
+              </div>
+            )}
+          </article>
+
+          <article className="alert-card alert-card-warning">
+            <div className="alert-card-head">
+              <strong>Ventas en seguimiento</strong>
+              <span>{salesFollowUpAlerts.length}</span>
+            </div>
+            <p className="muted">
+              Cotizadas, confirmadas o despachadas que ya merecen seguimiento.
+            </p>
+            {salesFollowUpAlerts.length === 0 ? (
+              <p className="muted">Sin ventas abiertas fuera de ventana esperada.</p>
+            ) : (
+              <div className="alert-preview-list">
+                {salesFollowUpAlerts.slice(0, 3).map((order) => (
+                  <div key={order.id} className="list-row">
+                    <span>{order.orderNumber}</span>
+                    <strong>{getDaysSince(order.orderDate)} dias</strong>
+                  </div>
+                ))}
+              </div>
+            )}
+          </article>
+        </div>
+      </SectionCard>
 
       <SectionCard
         title="Resumen por checkpoint"
