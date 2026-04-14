@@ -941,11 +941,11 @@ export function InventoryPage() {
               <strong>{averageAgeDays.toFixed(0)}</strong>
             </div>
             <div className="metric-chip">
-              <span>Lotes &gt; 30 dias</span>
+              <span>Inventario lento &gt; 30 dias</span>
               <strong>{lotsOver30Days}</strong>
             </div>
             <div className="metric-chip">
-              <span>Lotes &gt; 90 dias</span>
+              <span>Inventario lento &gt; 90 dias</span>
               <strong>{lotsOver90Days}</strong>
             </div>
           </div>
@@ -953,8 +953,8 @@ export function InventoryPage() {
           <div className="info-banner">
             <strong>Nota operativa</strong>
             <span>
-              Aging calculado con `receivedAt` para detectar lotes que llevan mas
-              tiempo inmovilizados en bodega.
+              Inventario lento calculado con `receivedAt` para detectar lotes que
+              llevan mas tiempo inmovilizados en bodega.
             </span>
           </div>
         </SectionCard>
@@ -997,7 +997,7 @@ export function InventoryPage() {
                     <th>Warehouse</th>
                     <th>Product</th>
                     <th>Status</th>
-                    <th>Aging</th>
+                    <th>Dias en bodega</th>
                     <th>Available</th>
                     <th>Reserved</th>
                     <th>Landed USD</th>
@@ -1062,7 +1062,7 @@ export function InventoryPage() {
                 <strong>{selectedLot.shipmentItemId ?? 'N/A'}</strong>
               </div>
               <div className="list-row">
-                <span>Aging</span>
+                <span>Inventario lento</span>
                 <strong>
                   {getLotAgeInDays(selectedLot.receivedAt)} dias ·{' '}
                   {getAgingLabel(getLotAgeInDays(selectedLot.receivedAt))}

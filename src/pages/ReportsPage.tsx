@@ -23,6 +23,23 @@ function getTodayDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function formatDateInput(date: Date) {
+  const offsetMs = date.getTimezoneOffset() * 60 * 1000;
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 10);
+}
+
+function getDateDaysAgo(days: number) {
+  const date = new Date();
+  date.setDate(date.getDate() - days);
+  return formatDateInput(date);
+}
+
+function getFirstDayOfCurrentMonth() {
+  const date = new Date();
+  date.setDate(1);
+  return formatDateInput(date);
+}
+
 function parseDecimal(value: string | number | null | undefined) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -38,6 +55,28 @@ function getLotAgeInDays(receivedAt: string) {
   }
 
   return Math.floor(diffMs / (1000 * 60 * 60 * 24));
+}
+
+function getDateOnly(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  return value.slice(0, 10);
+}
+
+function isWithinDateRange(
+  value: string | null | undefined,
+  firstDate: string,
+  lastDate: string,
+) {
+  const normalized = getDateOnly(value);
+
+  if (!normalized) {
+    return true;
+  }
+
+  return normalized >= firstDate && normalized <= lastDate;
 }
 
 export function ReportsPage() {
@@ -65,27 +104,136 @@ export function ReportsPage() {
   >([]);
   const [firstDate, setFirstDate] = useState(DEFAULT_HISTORY_START);
   const [lastDate, setLastDate] = useState(getTodayDate());
+  const [shipmentStatusFilter, setShipmentStatusFilter] = useState('all');
+  const [customsStatusFilter, setCustomsStatusFilter] = useState('all');
+  const [saleTypeFilter, setSaleTypeFilter] = useState<'all' | 'retail' | 'wholesale'>(
+    'all',
+  );
+  const [salesStatusFilter, setSalesStatusFilter] = useState('all');
+  const [warehouseFilter, setWarehouseFilter] = useState('all');
+  const [activePreset, setActivePreset] = useState('custom');
+
+  const filteredOrders = useMemo(
+    () => orders.filter((order) => isWithinDateRange(order.orderDate, firstDate, lastDate)),
+    [orders, firstDate, lastDate],
+  );
+
+  const filteredArticles = useMemo(() => {
+    const visibleOrderIds = new Set(
+      filteredOrders
+        .filter((order) => order.currentCheckpointStatus === selectedCheckpoint)
+        .map((order) => order.id),
+    );
+
+    return articles.filter((article) => visibleOrderIds.has(article.purchaseOrderId));
+  }, [articles, filteredOrders, selectedCheckpoint]);
+
+  const filteredSummary = useMemo(() => {
+    const grouped = new Map<
+      string,
+      { checkpoint: string; ordersCount: number; articlesQuantity: number; usdTotal: number }
+    >();
+
+    for (const order of filteredOrders) {
+      const checkpoint = order.currentCheckpointStatus;
+      const current = grouped.get(checkpoint) ?? {
+        checkpoint,
+        ordersCount: 0,
+        articlesQuantity: 0,
+        usdTotal: 0,
+      };
+
+      current.ordersCount += 1;
+      current.articlesQuantity += order.items.reduce(
+        (sum, item) => sum + parseDecimal(item.quantityOrdered),
+        0,
+      );
+      current.usdTotal += order.items.reduce(
+        (sum, item) => sum + parseDecimal(item.lineTotalUsd),
+        0,
+      );
+
+      grouped.set(checkpoint, current);
+    }
+
+    return [...grouped.values()].sort((left, right) =>
+      left.checkpoint.localeCompare(right.checkpoint),
+    );
+  }, [filteredOrders]);
+
+  const filteredShipments = useMemo(
+    () =>
+      shipments.filter(
+        (shipment) =>
+          isWithinDateRange(shipment.etd ?? shipment.createdAt, firstDate, lastDate) &&
+          (shipmentStatusFilter === 'all' || shipment.status === shipmentStatusFilter),
+      ),
+    [shipments, firstDate, lastDate, shipmentStatusFilter],
+  );
+
+  const filteredEntries = useMemo(
+    () =>
+      entries.filter(
+        (entry) =>
+          isWithinDateRange(
+            entry.arrivalDateChile ?? entry.createdAt,
+            firstDate,
+            lastDate,
+          ) &&
+          (customsStatusFilter === 'all' || entry.status === customsStatusFilter),
+      ),
+    [entries, firstDate, lastDate, customsStatusFilter],
+  );
+
+  const filteredLots = useMemo(
+    () =>
+      lots.filter(
+        (lot) =>
+          isWithinDateRange(lot.receivedAt, firstDate, lastDate) &&
+          (warehouseFilter === 'all' || String(lot.warehouseId) === warehouseFilter),
+      ),
+    [lots, firstDate, lastDate, warehouseFilter],
+  );
+
+  const filteredSalesOrders = useMemo(
+    () =>
+      salesOrders.filter(
+        (order) =>
+          isWithinDateRange(order.orderDate, firstDate, lastDate) &&
+          (saleTypeFilter === 'all' || order.saleType === saleTypeFilter) &&
+          (salesStatusFilter === 'all' || order.status === salesStatusFilter),
+      ),
+    [salesOrders, firstDate, lastDate, saleTypeFilter, salesStatusFilter],
+  );
+
+  const filteredUploads = useMemo(
+    () =>
+      uploads.filter((upload) =>
+        isWithinDateRange(upload.createdAt, firstDate, lastDate),
+      ),
+    [uploads, firstDate, lastDate],
+  );
 
   const selectedOrder = useMemo(
-    () => orders.find((order) => String(order.id) === selectedOrderId) ?? null,
-    [orders, selectedOrderId],
+    () => filteredOrders.find((order) => String(order.id) === selectedOrderId) ?? null,
+    [filteredOrders, selectedOrderId],
   );
 
   const selectedShipment = useMemo(
     () =>
-      shipments.find((shipment) => String(shipment.id) === selectedShipmentId) ??
+      filteredShipments.find((shipment) => String(shipment.id) === selectedShipmentId) ??
       null,
-    [shipments, selectedShipmentId],
+    [filteredShipments, selectedShipmentId],
   );
 
   const selectedEntry = useMemo(
-    () => entries.find((entry) => String(entry.id) === selectedEntryId) ?? null,
-    [entries, selectedEntryId],
+    () => filteredEntries.find((entry) => String(entry.id) === selectedEntryId) ?? null,
+    [filteredEntries, selectedEntryId],
   );
 
   const selectedLot = useMemo(
-    () => lots.find((lot) => String(lot.id) === selectedLotId) ?? null,
-    [lots, selectedLotId],
+    () => filteredLots.find((lot) => String(lot.id) === selectedLotId) ?? null,
+    [filteredLots, selectedLotId],
   );
 
   const warehousesById = useMemo(
@@ -104,7 +252,7 @@ export function ReportsPage() {
       }
     >();
 
-    for (const lot of lots) {
+    for (const lot of filteredLots) {
       const warehouseName =
         warehousesById.get(String(lot.warehouseId))?.name ??
         `Warehouse ${lot.warehouseId}`;
@@ -124,7 +272,7 @@ export function ReportsPage() {
     }
 
     return [...grouped.values()].sort((left, right) => right.visibleUsd - left.visibleUsd);
-  }, [lots, warehousesById]);
+  }, [filteredLots, warehousesById]);
 
   const loadFxHistory = useCallback(async () => {
     const response = await getJson<LatestExchangeRate[]>(
@@ -246,6 +394,47 @@ export function ReportsPage() {
     void loadFxHistory();
   }, [loadFxHistory]);
 
+  useEffect(() => {
+    setSelectedOrderId((current) =>
+      current && filteredOrders.some((order) => String(order.id) === current)
+        ? current
+        : filteredOrders[0]
+          ? String(filteredOrders[0].id)
+          : '',
+    );
+  }, [filteredOrders]);
+
+  useEffect(() => {
+    setSelectedShipmentId((current) =>
+      current &&
+      filteredShipments.some((shipment) => String(shipment.id) === current)
+        ? current
+        : filteredShipments[0]
+          ? String(filteredShipments[0].id)
+          : '',
+    );
+  }, [filteredShipments]);
+
+  useEffect(() => {
+    setSelectedEntryId((current) =>
+      current && filteredEntries.some((entry) => String(entry.id) === current)
+        ? current
+        : filteredEntries[0]
+          ? String(filteredEntries[0].id)
+          : '',
+    );
+  }, [filteredEntries]);
+
+  useEffect(() => {
+    setSelectedLotId((current) =>
+      current && filteredLots.some((lot) => String(lot.id) === current)
+        ? current
+        : filteredLots[0]
+          ? String(filteredLots[0].id)
+          : '',
+    );
+  }, [filteredLots]);
+
   function convertUsdToClp(usdValue: number) {
     if (!latestExchangeRate) {
       return null;
@@ -254,11 +443,72 @@ export function ReportsPage() {
     return usdValue * latestExchangeRate.rate;
   }
 
+  function resetFilters() {
+    setActivePreset('custom');
+    setFirstDate(DEFAULT_HISTORY_START);
+    setLastDate(getTodayDate());
+    setShipmentStatusFilter('all');
+    setCustomsStatusFilter('all');
+    setSaleTypeFilter('all');
+    setSalesStatusFilter('all');
+    setWarehouseFilter('all');
+  }
+
+  function applyPreset(
+    preset:
+      | 'live-operation'
+      | 'finance'
+      | 'slow-inventory'
+      | 'monthly-close',
+  ) {
+    const today = getTodayDate();
+
+    setActivePreset(preset);
+    setWarehouseFilter('all');
+
+    if (preset === 'live-operation') {
+      setFirstDate(getDateDaysAgo(21));
+      setLastDate(today);
+      setShipmentStatusFilter('in_transit');
+      setCustomsStatusFilter('pending');
+      setSaleTypeFilter('all');
+      setSalesStatusFilter('confirmed');
+      return;
+    }
+
+    if (preset === 'finance') {
+      setFirstDate(getFirstDayOfCurrentMonth());
+      setLastDate(today);
+      setShipmentStatusFilter('all');
+      setCustomsStatusFilter('all');
+      setSaleTypeFilter('all');
+      setSalesStatusFilter('completed');
+      return;
+    }
+
+    if (preset === 'slow-inventory') {
+      setFirstDate(DEFAULT_HISTORY_START);
+      setLastDate(getDateDaysAgo(30));
+      setShipmentStatusFilter('all');
+      setCustomsStatusFilter('all');
+      setSaleTypeFilter('all');
+      setSalesStatusFilter('all');
+      return;
+    }
+
+    setFirstDate(getFirstDayOfCurrentMonth());
+    setLastDate(today);
+    setShipmentStatusFilter('delivered');
+    setCustomsStatusFilter('closed');
+    setSaleTypeFilter('all');
+    setSalesStatusFilter('completed');
+  }
+
   function handleExportCheckpointSummary() {
     downloadCsv(
       `reports-procurement-checkpoints-${getTodayDate()}.csv`,
       ['checkpoint', 'orders_count', 'articles_quantity', 'usd_total', 'clp_total'],
-      summary.map((item) => [
+      filteredSummary.map((item) => [
         item.checkpoint,
         item.ordersCount,
         item.articlesQuantity,
@@ -279,7 +529,7 @@ export function ReportsPage() {
         'description',
         'articles_quantity',
       ],
-      articles.map((item) => [
+      filteredArticles.map((item) => [
         item.purchaseOrderId,
         item.orderNumber,
         item.checkpoint,
@@ -304,7 +554,7 @@ export function ReportsPage() {
         'items_count',
         'total_usd',
       ],
-      orders.map((order) => [
+      filteredOrders.map((order) => [
         order.id,
         order.orderNumber,
         order.supplierId,
@@ -354,7 +604,7 @@ export function ReportsPage() {
         'etd',
         'eta',
       ],
-      shipments.map((shipment) => [
+      filteredShipments.map((shipment) => [
         shipment.id,
         shipment.shipmentNumber,
         shipment.purchaseOrderId,
@@ -444,7 +694,7 @@ export function ReportsPage() {
         'expenses_count',
         'total_usd',
       ],
-      entries.map((entry) => [
+      filteredEntries.map((entry) => [
         entry.id,
         entry.entryNumber,
         entry.shipmentId,
@@ -504,7 +754,7 @@ export function ReportsPage() {
         'allocated_import_cost_usd',
         'unit_landed_cost_usd',
       ],
-      lots.map((lot) => {
+      filteredLots.map((lot) => {
         const warehouse = warehousesById.get(String(lot.warehouseId));
 
         return [
@@ -578,7 +828,7 @@ export function ReportsPage() {
         'total_usd',
         'reference_total_clp',
       ],
-      salesOrders.map((order) => {
+      filteredSalesOrders.map((order) => {
         const totalUsd = parseDecimal(order.totalUsd);
 
         return [
@@ -632,7 +882,7 @@ export function ReportsPage() {
         'extractions_count',
         'validated_extractions_count',
       ],
-      uploads.map((upload) => [
+      filteredUploads.map((upload) => [
         upload.id,
         upload.documentType,
         upload.originalFileName,
@@ -684,6 +934,44 @@ export function ReportsPage() {
           </div>
         </div>
 
+        <div className="form-actions">
+          <button
+            type="button"
+            className={activePreset === 'live-operation' ? 'primary-button' : 'ghost-button'}
+            onClick={() => applyPreset('live-operation')}
+          >
+            Operacion viva
+          </button>
+          <button
+            type="button"
+            className={activePreset === 'finance' ? 'primary-button' : 'ghost-button'}
+            onClick={() => applyPreset('finance')}
+          >
+            Finanzas
+          </button>
+          <button
+            type="button"
+            className={activePreset === 'slow-inventory' ? 'primary-button' : 'ghost-button'}
+            onClick={() => applyPreset('slow-inventory')}
+          >
+            Inventario lento
+          </button>
+          <button
+            type="button"
+            className={activePreset === 'monthly-close' ? 'primary-button' : 'ghost-button'}
+            onClick={() => applyPreset('monthly-close')}
+          >
+            Cierre mensual
+          </button>
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={resetFilters}
+          >
+            Reset filtros
+          </button>
+        </div>
+
         {latestExchangeRate ? (
           <p className="muted">
             Snapshot activo: 1 USD = {latestExchangeRate.rate.toFixed(2)} CLP ·
@@ -693,6 +981,140 @@ export function ReportsPage() {
       </section>
 
       {error ? <p className="feedback feedback-error">{error}</p> : null}
+
+      <SectionCard
+        title="Filtros globales"
+        subtitle="Los exportables salen recortados por este rango y por los filtros operativos activos"
+      >
+        <div className="form-grid form-grid-three">
+          <label className="field">
+            <span>Desde</span>
+            <input
+              type="date"
+              value={firstDate}
+              onChange={(event) => setFirstDate(event.target.value)}
+            />
+          </label>
+
+          <label className="field">
+            <span>Hasta</span>
+            <input
+              type="date"
+              value={lastDate}
+              onChange={(event) => setLastDate(event.target.value)}
+            />
+          </label>
+
+          <label className="field">
+            <span>Warehouse</span>
+            <select
+              value={warehouseFilter}
+              onChange={(event) => setWarehouseFilter(event.target.value)}
+            >
+              <option value="all">Todos</option>
+              {warehouses.map((warehouse) => (
+                <option key={warehouse.id} value={warehouse.id}>
+                  {warehouse.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="field">
+            <span>Estado embarque</span>
+            <select
+              value={shipmentStatusFilter}
+              onChange={(event) => setShipmentStatusFilter(event.target.value)}
+            >
+              <option value="all">Todos</option>
+              {Array.from(new Set(shipments.map((shipment) => shipment.status))).map(
+                (status) => (
+                  <option key={status} value={status}>
+                    {status}
+                  </option>
+                ),
+              )}
+            </select>
+          </label>
+
+          <label className="field">
+            <span>Estado aduana</span>
+            <select
+              value={customsStatusFilter}
+              onChange={(event) => setCustomsStatusFilter(event.target.value)}
+            >
+              <option value="all">Todos</option>
+              {Array.from(new Set(entries.map((entry) => entry.status))).map((status) => (
+                <option key={status} value={status}>
+                  {status}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="field">
+            <span>Canal venta</span>
+            <select
+              value={saleTypeFilter}
+              onChange={(event) =>
+                setSaleTypeFilter(event.target.value as 'all' | 'retail' | 'wholesale')
+              }
+            >
+              <option value="all">Todos</option>
+              <option value="retail">retail</option>
+              <option value="wholesale">wholesale</option>
+            </select>
+          </label>
+
+          <label className="field">
+            <span>Estado venta</span>
+            <select
+              value={salesStatusFilter}
+              onChange={(event) => setSalesStatusFilter(event.target.value)}
+            >
+              <option value="all">Todos</option>
+              {Array.from(new Set(salesOrders.map((order) => order.status))).map(
+                (status) => (
+                  <option key={status} value={status}>
+                    {status}
+                  </option>
+                ),
+              )}
+            </select>
+          </label>
+        </div>
+
+        <div className="metric-strip">
+          <div className="metric-chip">
+            <span>Pedidos filtrados</span>
+            <strong>{filteredOrders.length}</strong>
+          </div>
+          <div className="metric-chip">
+            <span>Embarques filtrados</span>
+            <strong>{filteredShipments.length}</strong>
+          </div>
+          <div className="metric-chip">
+            <span>Aduanas filtradas</span>
+            <strong>{filteredEntries.length}</strong>
+          </div>
+          <div className="metric-chip">
+            <span>Lotes filtrados</span>
+            <strong>{filteredLots.length}</strong>
+          </div>
+          <div className="metric-chip">
+            <span>Ventas filtradas</span>
+            <strong>{filteredSalesOrders.length}</strong>
+          </div>
+          <div className="metric-chip">
+            <span>Docs filtrados</span>
+            <strong>{filteredUploads.length}</strong>
+          </div>
+        </div>
+
+        <p className="muted">
+          Preset activo: {activePreset === 'custom' ? 'custom' : activePreset}
+        </p>
+      </SectionCard>
 
       <div className="two-column-grid">
         <SectionCard
@@ -720,7 +1142,7 @@ export function ReportsPage() {
                 value={selectedOrderId}
                 onChange={(event) => setSelectedOrderId(event.target.value)}
               >
-                {orders.map((order) => (
+                {filteredOrders.map((order) => (
                   <option key={order.id} value={order.id}>
                     {order.orderNumber}
                   </option>
@@ -734,7 +1156,7 @@ export function ReportsPage() {
               type="button"
               className="ghost-button"
               onClick={handleExportCheckpointSummary}
-              disabled={summary.length === 0}
+              disabled={filteredSummary.length === 0}
             >
               Resumen checkpoints
             </button>
@@ -742,7 +1164,7 @@ export function ReportsPage() {
               type="button"
               className="ghost-button"
               onClick={handleExportOrders}
-              disabled={orders.length === 0}
+              disabled={filteredOrders.length === 0}
             >
               Pedidos
             </button>
@@ -758,7 +1180,7 @@ export function ReportsPage() {
               type="button"
               className="primary-button"
               onClick={handleExportCheckpointArticles}
-              disabled={articles.length === 0}
+              disabled={filteredArticles.length === 0}
             >
               Articulos checkpoint
             </button>
@@ -776,7 +1198,7 @@ export function ReportsPage() {
                 value={selectedShipmentId}
                 onChange={(event) => setSelectedShipmentId(event.target.value)}
               >
-                {shipments.map((shipment) => (
+                {filteredShipments.map((shipment) => (
                   <option key={shipment.id} value={shipment.id}>
                     {shipment.shipmentNumber}
                   </option>
@@ -790,7 +1212,7 @@ export function ReportsPage() {
                 value={selectedEntryId}
                 onChange={(event) => setSelectedEntryId(event.target.value)}
               >
-                {entries.map((entry) => (
+                {filteredEntries.map((entry) => (
                   <option key={entry.id} value={entry.id}>
                     {entry.entryNumber}
                   </option>
@@ -804,7 +1226,7 @@ export function ReportsPage() {
               type="button"
               className="ghost-button"
               onClick={handleExportShipments}
-              disabled={shipments.length === 0}
+              disabled={filteredShipments.length === 0}
             >
               Embarques
             </button>
@@ -820,7 +1242,7 @@ export function ReportsPage() {
               type="button"
               className="ghost-button"
               onClick={handleExportCustomsEntries}
-              disabled={entries.length === 0}
+              disabled={filteredEntries.length === 0}
             >
               Expedientes
             </button>
@@ -848,7 +1270,7 @@ export function ReportsPage() {
                 value={selectedLotId}
                 onChange={(event) => setSelectedLotId(event.target.value)}
               >
-                {lots.map((lot) => (
+                {filteredLots.map((lot) => (
                   <option key={lot.id} value={lot.id}>
                     {lot.lotCode}
                   </option>
@@ -862,7 +1284,7 @@ export function ReportsPage() {
               type="button"
               className="ghost-button"
               onClick={handleExportInventoryLots}
-              disabled={lots.length === 0}
+              disabled={filteredLots.length === 0}
             >
               Lotes inventario
             </button>
@@ -914,7 +1336,7 @@ export function ReportsPage() {
               type="button"
               className="ghost-button"
               onClick={handleExportSalesOrders}
-              disabled={salesOrders.length === 0}
+              disabled={filteredSalesOrders.length === 0}
             >
               Ventas
             </button>
@@ -930,7 +1352,7 @@ export function ReportsPage() {
               type="button"
               className="primary-button"
               onClick={handleExportDocumentUploads}
-              disabled={uploads.length === 0}
+              disabled={filteredUploads.length === 0}
             >
               Uploads documentales
             </button>

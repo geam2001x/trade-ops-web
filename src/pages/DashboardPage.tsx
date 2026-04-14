@@ -549,8 +549,8 @@ export function DashboardPage() {
 
       <div className="two-column-grid">
         <SectionCard
-          title="Aging de inventario"
-          subtitle="Lotes mas envejecidos para seguimiento operativo"
+          title="Inventario lento"
+          subtitle="Lotes con mas tiempo en bodega para seguimiento operativo"
           action={
             <button
               type="button"
@@ -571,7 +571,7 @@ export function DashboardPage() {
                   <tr>
                     <th>Lote</th>
                     <th>Bodega</th>
-                    <th>Aging</th>
+                    <th>Dias en bodega</th>
                     <th>Disponible</th>
                     <th>Visible USD</th>
                   </tr>
