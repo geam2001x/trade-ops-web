@@ -11,16 +11,10 @@ import {
   getJson,
   postJson,
 } from '../app/api';
+import { downloadCsv } from '../app/export';
 import { SectionCard } from '../components/ui/SectionCard';
 
 const DEFAULT_HISTORY_START = '2026-04-12';
-
-function formatUsd(value: number) {
-  return new Intl.NumberFormat('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(value);
-}
 
 function formatClpRate(value: number | null) {
   if (value === null) {
@@ -46,10 +40,17 @@ function formatDateOnly(value: string) {
   }).format(new Date(value));
 }
 
+function formatClpInteger(value: number) {
+  return new Intl.NumberFormat('es-CL', {
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
 export function FinancePage() {
   const { session } = useAuth();
   const [lots, setLots] = useState<InventoryLot[]>([]);
   const [orders, setOrders] = useState<SalesOrder[]>([]);
+  const [currencyView, setCurrencyView] = useState<'USD' | 'CLP'>('USD');
   const [selectedLotId, setSelectedLotId] = useState('');
   const [selectedOrderId, setSelectedOrderId] = useState('');
   const [lotProfitability, setLotProfitability] =
@@ -190,6 +191,116 @@ export function FinancePage() {
     }
   }
 
+  function formatMoneyFromUsd(usdValue: number, digits = 2) {
+    if (currencyView === 'CLP' && latestExchangeRate) {
+      return `CLP ${new Intl.NumberFormat('es-CL', {
+        maximumFractionDigits: 0,
+      }).format(usdValue * latestExchangeRate.rate)}`;
+    }
+
+    return `USD ${new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    }).format(usdValue)}`;
+  }
+
+  function convertUsdToClp(usdValue: number) {
+    if (!latestExchangeRate) {
+      return null;
+    }
+
+    return usdValue * latestExchangeRate.rate;
+  }
+
+  function handleExportExchangeRateHistory() {
+    downloadCsv(
+      `fx-history-usd-clp-${firstDate}-to-${lastDate}.csv`,
+      [
+        'date',
+        'observed_rate_clp',
+        'buy_rate_clp',
+        'sell_rate_clp',
+        'official_source',
+        'buy_sell_source',
+        'fetched_at',
+      ],
+      exchangeRateHistory.map((snapshot) => [
+        snapshot.rateDate,
+        snapshot.rate,
+        snapshot.buyRate,
+        snapshot.sellRate,
+        snapshot.sourceName,
+        snapshot.buySellSourceName,
+        snapshot.fetchedAt,
+      ]),
+    );
+  }
+
+  function handleExportLotProfitability() {
+    if (!lotProfitability) {
+      return;
+    }
+
+    downloadCsv(
+      `lot-profitability-${lotProfitability.lotCode}.csv`,
+      ['metric', 'value_usd', 'value_clp'],
+      [
+        [
+          'unit_landed_cost',
+          lotProfitability.unitLandedCostUsd.toFixed(4),
+          convertUsdToClp(lotProfitability.unitLandedCostUsd)?.toFixed(0) ?? null,
+        ],
+        [
+          'allocated_import_cost',
+          lotProfitability.allocatedImportCostUsd.toFixed(4),
+          convertUsdToClp(lotProfitability.allocatedImportCostUsd)?.toFixed(0) ??
+            null,
+        ],
+        [
+          'completed_revenue',
+          lotProfitability.completedRevenueUsd.toFixed(2),
+          convertUsdToClp(lotProfitability.completedRevenueUsd)?.toFixed(0) ?? null,
+        ],
+        [
+          'completed_gross_margin',
+          lotProfitability.completedGrossMarginUsd.toFixed(2),
+          convertUsdToClp(lotProfitability.completedGrossMarginUsd)?.toFixed(0) ??
+            null,
+        ],
+        ['completed_roi_percent', lotProfitability.completedRoiPercent ?? 'N/A', null],
+      ],
+    );
+  }
+
+  function handleExportOrderProfitability() {
+    if (!orderProfitability) {
+      return;
+    }
+
+    downloadCsv(
+      `sales-order-profitability-${orderProfitability.orderNumber}.csv`,
+      ['metric', 'value_usd', 'value_clp'],
+      [
+        [
+          'revenue',
+          orderProfitability.revenueUsd.toFixed(2),
+          convertUsdToClp(orderProfitability.revenueUsd)?.toFixed(0) ?? null,
+        ],
+        [
+          'cost',
+          orderProfitability.costUsd.toFixed(2),
+          convertUsdToClp(orderProfitability.costUsd)?.toFixed(0) ?? null,
+        ],
+        [
+          'gross_margin',
+          orderProfitability.grossMarginUsd.toFixed(2),
+          convertUsdToClp(orderProfitability.grossMarginUsd)?.toFixed(0) ?? null,
+        ],
+        ['roi_percent', orderProfitability.roiPercent ?? 'N/A', null],
+      ],
+    );
+  }
+
   return (
     <div className="page-grid">
       {error ? <p className="feedback feedback-error">{error}</p> : null}
@@ -231,10 +342,10 @@ export function FinancePage() {
           </label>
 
           <div className="info-banner">
-            <strong>Sync automatico diario</strong>
+            <strong>Captura diaria oficial</strong>
             <span>
-              Quedo preparado en backend. En tu entorno local quedara activo con
-              `FX_AUTO_SYNC_ENABLED=true`.
+              El backend toma una sola referencia diaria de lunes a viernes a las
+              13:15 hora Chile. El boton manual queda solo como respaldo operativo.
             </span>
           </div>
         </div>
@@ -312,6 +423,16 @@ export function FinancePage() {
       <SectionCard
         title="Historico diario de snapshots"
         subtitle="Persistencia de referencia oficial y, cuando existe, compra / venta del dia"
+        action={
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={handleExportExchangeRateHistory}
+            disabled={exchangeRateHistory.length === 0}
+          >
+            Exportar CSV
+          </button>
+        }
       >
         <div className="table-shell">
           <table>
@@ -355,19 +476,44 @@ export function FinancePage() {
       <div className="two-column-grid">
         <SectionCard
           title="Rentabilidad por lote"
-          subtitle="Costo acumulado y margen realizado"
+          subtitle={`Costo acumulado y margen realizado en ${currencyView}`}
           action={
-            <select
-              className="select-input"
-              value={selectedLotId}
-              onChange={(event) => setSelectedLotId(event.target.value)}
-            >
-              {lots.map((lot) => (
-                <option key={lot.id} value={lot.id}>
-                  {lot.lotCode}
-                </option>
-              ))}
-            </select>
+            <div className="form-actions">
+              <button
+                type="button"
+                className={currencyView === 'USD' ? 'primary-button' : 'ghost-button'}
+                onClick={() => setCurrencyView('USD')}
+              >
+                USD
+              </button>
+              <button
+                type="button"
+                className={currencyView === 'CLP' ? 'primary-button' : 'ghost-button'}
+                onClick={() => setCurrencyView('CLP')}
+                disabled={!latestExchangeRate}
+              >
+                CLP
+              </button>
+              <select
+                className="select-input"
+                value={selectedLotId}
+                onChange={(event) => setSelectedLotId(event.target.value)}
+              >
+                {lots.map((lot) => (
+                  <option key={lot.id} value={lot.id}>
+                    {lot.lotCode}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={handleExportLotProfitability}
+                disabled={!lotProfitability}
+              >
+                Exportar CSV
+              </button>
+            </div>
           }
         >
           {lotProfitability ? (
@@ -377,20 +523,28 @@ export function FinancePage() {
                 <strong>{lotProfitability.status}</strong>
               </div>
               <div className="list-row">
-                <span>Unit landed cost USD</span>
-                <strong>{lotProfitability.unitLandedCostUsd.toFixed(4)}</strong>
+                <span>Unit landed cost {currencyView}</span>
+                <strong>
+                  {formatMoneyFromUsd(lotProfitability.unitLandedCostUsd, 4)}
+                </strong>
               </div>
               <div className="list-row">
-                <span>Import cost asignado USD</span>
-                <strong>{lotProfitability.allocatedImportCostUsd.toFixed(4)}</strong>
+                <span>Import cost asignado {currencyView}</span>
+                <strong>
+                  {formatMoneyFromUsd(lotProfitability.allocatedImportCostUsd, 4)}
+                </strong>
               </div>
               <div className="list-row">
-                <span>Revenue completado USD</span>
-                <strong>{lotProfitability.completedRevenueUsd.toFixed(2)}</strong>
+                <span>Revenue completado {currencyView}</span>
+                <strong>
+                  {formatMoneyFromUsd(lotProfitability.completedRevenueUsd)}
+                </strong>
               </div>
               <div className="list-row">
-                <span>Gross margin USD</span>
-                <strong>{lotProfitability.completedGrossMarginUsd.toFixed(2)}</strong>
+                <span>Gross margin {currencyView}</span>
+                <strong>
+                  {formatMoneyFromUsd(lotProfitability.completedGrossMarginUsd)}
+                </strong>
               </div>
               <div className="list-row">
                 <span>ROI %</span>
@@ -406,19 +560,29 @@ export function FinancePage() {
 
         <SectionCard
           title="Rentabilidad por orden"
-          subtitle="Margen realizado sobre ventas cerradas"
+          subtitle={`Margen realizado sobre ventas cerradas en ${currencyView}`}
           action={
-            <select
-              className="select-input"
-              value={selectedOrderId}
-              onChange={(event) => setSelectedOrderId(event.target.value)}
-            >
-              {orders.map((order) => (
-                <option key={order.id} value={order.id}>
-                  {order.orderNumber}
-                </option>
-              ))}
-            </select>
+            <div className="form-actions">
+              <select
+                className="select-input"
+                value={selectedOrderId}
+                onChange={(event) => setSelectedOrderId(event.target.value)}
+              >
+                {orders.map((order) => (
+                  <option key={order.id} value={order.id}>
+                    {order.orderNumber}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={handleExportOrderProfitability}
+                disabled={!orderProfitability}
+              >
+                Exportar CSV
+              </button>
+            </div>
           }
         >
           {orderProfitability ? (
@@ -428,16 +592,18 @@ export function FinancePage() {
                 <strong>{orderProfitability.saleType}</strong>
               </div>
               <div className="list-row">
-                <span>Revenue USD</span>
-                <strong>{formatUsd(orderProfitability.revenueUsd)}</strong>
+                <span>Revenue {currencyView}</span>
+                <strong>{formatMoneyFromUsd(orderProfitability.revenueUsd)}</strong>
               </div>
               <div className="list-row">
-                <span>Cost USD</span>
-                <strong>{formatUsd(orderProfitability.costUsd)}</strong>
+                <span>Cost {currencyView}</span>
+                <strong>{formatMoneyFromUsd(orderProfitability.costUsd)}</strong>
               </div>
               <div className="list-row">
-                <span>Gross margin USD</span>
-                <strong>{formatUsd(orderProfitability.grossMarginUsd)}</strong>
+                <span>Gross margin {currencyView}</span>
+                <strong>
+                  {formatMoneyFromUsd(orderProfitability.grossMarginUsd)}
+                </strong>
               </div>
               <div className="list-row">
                 <span>ROI %</span>
@@ -451,6 +617,12 @@ export function FinancePage() {
           )}
         </SectionCard>
       </div>
+
+      {latestExchangeRate ? (
+        <p className="muted">
+          Conversión activa: 1 USD = {formatClpInteger(latestExchangeRate.rate)} CLP
+        </p>
+      ) : null}
     </div>
   );
 }
