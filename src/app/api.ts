@@ -188,6 +188,34 @@ export type InventoryLotProfitability = {
   completedRoiPercent: number | null;
 };
 
+export type LatestExchangeRate = {
+  baseCurrencyCode: string;
+  quoteCurrencyCode: string;
+  rate: number;
+  buyRate: number | null;
+  sellRate: number | null;
+  rateDate: string;
+  sourceName: string;
+  sourceUrl: string | null;
+  buySellSourceName: string | null;
+  buySellSourceUrl: string | null;
+  fetchedAt: string;
+};
+
+export type ExchangeRateSyncSummary = {
+  baseCurrencyCode: string;
+  quoteCurrencyCode: string;
+  firstDate: string;
+  lastDate: string;
+  processedCount: number;
+  importedCount: number;
+  updatedCount: number;
+  sourceName: string;
+  sourceUrl: string;
+  buySellSourceName: string | null;
+  buySellSourceUrl: string | null;
+};
+
 export type ShipmentItem = {
   id: number;
   shipmentId: number;
